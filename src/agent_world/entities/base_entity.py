@@ -17,10 +17,11 @@ import logging
 from typing import Any
 
 from agent_world.config.node_ontology import (
-    type_name_to_id,
+    prefix_to_type_id_wrap as _prefix_to_tid,
     is_terminal,
     get_ontology,
 )
+from agent_world.config.config_loader import get_type_def as _get_type_def
 
 logger = logging.getLogger(__name__)
 
@@ -40,17 +41,24 @@ class Entity:
       - name（字符串）：内容层，LLM 可读名称
     """
 
-    def __init__(self, entity_id: str, name: str, entity_type: str = "npc"):
+    def __init__(self, entity_id: str, name: str, entity_type: str = ""):
         self.entity_id = entity_id
         self.name = name
-        self.entity_type = entity_type  # npc / zone / item / object — 内容层，LLM 用
 
-        # 拓扑身份：数字 type_id，引擎唯一读这个
-        self.type_id: int = type_name_to_id(entity_type)
+        # 拓扑身份：从 ID 前缀推断 type_id，引擎只读这个
+        self.type_id: int = _prefix_to_tid(entity_id)
+
+        # entity_type 仅供 LLM 提示词显示，引擎不依赖此字段
+        # 如果未传入，从 config 自动补全
+        if not entity_type and self.type_id:
+            tdef = _get_type_def(self.type_id)
+            entity_type = tdef.get("id", "") if tdef else ""
+        self.entity_type = entity_type
 
         self.attributes: dict[str, Any] = {}  # 基础属性（vitality, satiety, mood...）
         self.connected_entity_ids: set[str] = set()  # 连接的节点 ID 集合
         self.recent_info: str = ""  # 近况投影（LLM #4b 写入，类型无关）
+        self.conserved: bool = False  # 是否为守恒量（度守恒校验用）
 
         # 半结构化自我描述
         self.role: str = ""       # 角色（用于 NPC/Entity）
@@ -129,6 +137,7 @@ class Entity:
             "desc": self.desc,
             "attributes": dict(self.attributes),
             "connected_entity_ids": sorted(self.connected_entity_ids),
+            "conserved": self.conserved,
         }
 
     def __repr__(self) -> str:

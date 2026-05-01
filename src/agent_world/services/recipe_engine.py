@@ -18,6 +18,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..entities.recipe import Recipe, RecipeRegistry
+from ..config.config_loader import has_role
 
 if TYPE_CHECKING:
     from ..services.graph_engine import GraphEngine
@@ -61,7 +62,7 @@ class RecipeEngine:
             if edge.source_entity_id != npc_eid:
                 continue
             tgt = self._graph.get_entity(edge.target_entity_id)
-            if not tgt or tgt.entity_type != "object":
+            if not tgt or not has_role(tgt.type_id, "fixture"):
                 continue
             # 检查物体类型：通过实体名称或属性
             obj_type = tgt.get_attr("object_type") or tgt.name
@@ -77,7 +78,7 @@ class RecipeEngine:
                     if edge.source_entity_id != npc_eid:
                         continue
                     tgt = self._graph.get_entity(edge.target_entity_id)
-                    if tgt and tgt.entity_type == "object":
+                    if tgt and has_role(tgt.type_id, "fixture"):
                         return edge.edge_id, tgt.entity_id
 
         return None, None
@@ -108,7 +109,7 @@ class RecipeEngine:
                 if edge.source_entity_id != npc_eid:
                     continue
                 tgt = self._graph.get_entity(edge.target_entity_id)
-                if tgt and tgt.entity_type == "object":
+                if tgt and has_role(tgt.type_id, "fixture"):
                     obj_type = tgt.get_attr("object_type") or tgt.name
                     types.append(obj_type)
 
@@ -302,6 +303,6 @@ class RecipeEngine:
         if not self._graph:
             return None
         for ent in self._graph.all_entities():
-            if ent.name == item_name and ent.entity_type == "item":
+            if ent.name == item_name and has_role(ent.type_id, "thing"):
                 return ent.entity_id
         return None

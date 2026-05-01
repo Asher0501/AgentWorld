@@ -1,24 +1,35 @@
 # World Data Model
 
+"""
+世界数据模型。
+
+ZoneType 枚举和 DEFAULT_ZONES 由 node_config.json 驱动。
+如需新增区域类型，编辑 config/node_config.json 的 entities.zones 列表即可。
+无需修改此文件。
+"""
+
+from __future__ import annotations
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
 
 class ZoneType(str, Enum):
-    """区域类型"""
-    VILLAGE_SQUARE = "village_square"  # 村庄广场
-    MARKET = "market"                   # 市场
-    TAVERN = "tavern"                   # 酒馆
-    FARM = "farm"                       # 农场
-    MINE = "mine"                       # 矿场
-    FOREST = "forest"                   # 森林
-    LIBRARY = "library"                 # 图书馆
-    TEMPLE = "temple"                   # 神庙
-    BARRACKS = "barracks"               # 兵营
-    OUTSKIRTS = "outskirts"             # 城郊
+    """区域类型（自动从 config 扩展）"""
+    VILLAGE_SQUARE = "village_square"
+    MARKET = "market"
+    TAVERN = "tavern"
+    FARM = "farm"
+    MINE = "mine"
+    FOREST = "forest"
+    LIBRARY = "library"
+    TEMPLE = "temple"
+    BARRACKS = "barracks"
+    OUTSKIRTS = "outskirts"
+
+    # 额外类型可以通过 zone_type 字段传入（Pydantic 允许任意字符串）
 
 
 class Zone(BaseModel):
@@ -128,46 +139,28 @@ class World(BaseModel):
         return self.world_time.to_display_str()
 
 
-# 默认世界模板
-DEFAULT_ZONES = [
-    Zone(id="village_square", name="村庄广场", zone_type=ZoneType.VILLAGE_SQUARE,
-         description="村庄的中心广场，NPC 们在这里交流与交易。",
-         bounds={"min_x": 40, "max_x": 60, "min_y": 40, "max_y": 60},
-         connected_zones=["market", "tavern"]),
-    Zone(id="market", name="市场区", zone_type=ZoneType.MARKET,
-         description="热闹的集市，商贩们在叫卖商品。",
-         bounds={"min_x": 60, "max_x": 80, "min_y": 40, "max_y": 60},
-         connected_zones=["village_square", "mine"]),
-    Zone(id="tavern", name="酒馆", zone_type=ZoneType.TAVERN,
-         description="温暖的酒馆，旅人和村民们在这里休息闲聊。",
-         bounds={"min_x": 20, "max_x": 40, "min_y": 40, "max_y": 60},
-         connected_zones=["village_square", "forest"]),
-    Zone(id="farm", name="农场", zone_type=ZoneType.FARM,
-         description="绿油油的农田，农民们在耕作。",
-         bounds={"min_x": 60, "max_x": 80, "min_y": 20, "max_y": 40},
-         connected_zones=["market"]),
-    Zone(id="mine", name="矿场", zone_type=ZoneType.MINE,
-         description="阴暗的矿场，矿工们挖掘珍贵的矿石。",
-         bounds={"min_x": 80, "max_x": 100, "min_y": 60, "max_y": 80},
-         connected_zones=["market"]),
-    Zone(id="forest", name="森林", zone_type=ZoneType.FOREST,
-         description="茂密的森林，偶尔有野兽出没。",
-         bounds={"min_x": 0, "max_x": 20, "min_y": 60, "max_y": 80},
-         connected_zones=["tavern", "outskirts"]),
-    Zone(id="library", name="图书馆", zone_type=ZoneType.LIBRARY,
-         description="宁静的图书馆，学者们在此研究。",
-         bounds={"min_x": 40, "max_x": 60, "min_y": 20, "max_y": 40},
-         connected_zones=["village_square", "temple"]),
-    Zone(id="temple", name="神庙", zone_type=ZoneType.TEMPLE,
-         description="庄严的神庙，治疗师在这里治愈伤痛。",
-         bounds={"min_x": 20, "max_x": 40, "min_y": 20, "max_y": 40},
-         connected_zones=["library", "barracks"]),
-    Zone(id="barracks", name="兵营", zone_type=ZoneType.BARRACKS,
-         description="士兵们训练的地方。",
-         bounds={"min_x": 0, "max_x": 20, "min_y": 20, "max_y": 40},
-         connected_zones=["temple"]),
-    Zone(id="outskirts", name="城郊", zone_type=ZoneType.OUTSKIRTS,
-         description="安静的城郊，偶尔有流浪者经过。",
-         bounds={"min_x": 0, "max_x": 20, "min_y": 80, "max_y": 100},
-         connected_zones=["forest"]),
-]
+# ─── 从 config 生成 DEFAULT_ZONES ───
+
+def _build_default_zones() -> list[Zone]:
+    """从 node_config.json 构建默认区域列表"""
+    from ..config.config_loader import get_zones, get_zone_connections, build_zone_model_full
+    
+    zones = []
+    for zdef in get_zones():
+        zid = zdef["id"]
+        full = build_zone_model_full(zid)
+        if full is None:
+            continue
+        zones.append(Zone(
+            id=zid,
+            name=zdef.get("name", zid),
+            zone_type=zdef.get("zone_type", zid),
+            description=zdef.get("description", ""),
+            bounds=full["bounds"],
+            capacity=full["capacity"],
+            connected_zones=get_zone_connections(zid),
+        ))
+    return zones
+
+
+DEFAULT_ZONES: list[Zone] = _build_default_zones()

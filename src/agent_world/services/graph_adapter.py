@@ -11,6 +11,7 @@ import uuid
 from typing import Any
 
 from ..entities.base_entity import Entity
+from ..config.config_loader import has_role
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ def npc_to_entity(config: Any) -> Entity:
     if not config or not hasattr(config, "name"):
         return None
     eid = _make_eid("npc", config.name)
-    ent = Entity(entity_id=eid, name=config.name, entity_type="npc")
+    ent = Entity(entity_id=eid, name=config.name)
     ent.role = str(getattr(config, "role", "")) if not isinstance(getattr(config, "role", ""), str) else getattr(config, "role", "")
 
     # 从 DB 模型读取 traits（兼容 persona_tags / personality_tags / traits）
@@ -53,8 +54,9 @@ def npc_to_entity(config: Any) -> Entity:
 
 def item_to_entity(name: str, initial_qty: int = 1) -> Entity:
     eid = _make_eid("item", name)
-    ent = Entity(entity_id=eid, name=name, entity_type="item")
+    ent = Entity(entity_id=eid, name=name)
     ent.desc = f"这是一个物品，可以持有、使用、交易。"
+    ent.conserved = True
     return ent
 
 
@@ -62,7 +64,7 @@ def zone_to_entity(config: Any) -> Entity:
     if not config or not hasattr(config, "name"):
         return None
     eid = f"zone_{config.name}"
-    ent = Entity(entity_id=eid, name=config.name, entity_type="zone")
+    ent = Entity(entity_id=eid, name=config.name)
     ent.role = getattr(config, "role", "")
     ent.desc = getattr(config, "desc", "")
     ent.attributes["capacity"] = float(getattr(config, "capacity", 100))
@@ -95,7 +97,7 @@ def build_world_graph(npcs: list, objects: list, zones: list,
             oid = f"obj_{obj.id[:8]}" if hasattr(obj, 'id') else obj.entity_id
             if oid not in entities:
                 name = getattr(obj, 'name', oid)
-                ent = Entity(entity_id=oid, name=name, entity_type="object")
+                ent = Entity(entity_id=oid, name=name)
                 ent.role = getattr(obj, 'object_type', "")
                 ent.attributes["state"] = "intact"
                 entities[oid] = ent

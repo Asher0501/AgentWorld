@@ -19,6 +19,7 @@ from typing import Any
 
 from ..entities.base_entity import Entity
 from ..config.node_ontology import prefix_to_type_id
+from ..config.config_loader import has_role, get_type_def
 from ..models.interaction import InteractionGraph, InteractionEdge
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,9 @@ class GraphEngine:
         if entity.entity_id in self._entities:
             # 保留连接信息
             entity.connected_entity_ids = self._entities[entity.entity_id].connected_entity_ids
+        # 物品类实体自动标记守恒（兜底：即使 item_to_entity 漏设）
+        if _is_item_type(entity.entity_id):
+            entity.conserved = True
         self._entities[entity.entity_id] = entity
         logger.debug(f"[Graph] 注册实体: {entity.entity_id} ({entity.name})")
 
@@ -77,6 +81,14 @@ class GraphEngine:
     def get_entity(self, entity_id: str) -> Entity | None:
         return self._entities.get(entity_id)
 
+    def is_conserved(self, entity_id: str) -> bool:
+        """查询实体是否为守恒量"""
+        ent = self._entities.get(entity_id)
+        if ent:
+            return ent.conserved
+        # 未注册实体：根据 eid 前缀判断
+        return _is_item_type(entity_id)
+
     def find_entity_by_name(self, name: str) -> Entity | None:
         """按名称查找实体"""
         for ent in self._entities.values():
@@ -101,8 +113,10 @@ class GraphEngine:
             if eid not in self._entities:
                 name = _extract_name_from_eid(eid)
                 ent = Entity(entity_id=eid, name=name, entity_type=_infer_type(eid))
+                # 物品类实体默认标记为守恒量
+                ent.conserved = _is_item_type(eid)
                 self._entities[eid] = ent
-                logger.info(f"[Graph] 自动注册占位实体: {eid} ({name})")
+                logger.info(f"[Graph] 自动注册占位实体: {eid} ({name}) conserved={ent.conserved}")
 
         # 已有边 → 更新 qty
         existing = self._edge_by_pair.get((src_eid, tgt_eid))
@@ -233,6 +247,8 @@ class GraphEngine:
           "disconnect" — 移除边 ({src, tgt})
           "set_qty"    — 设置数量 ({src, tgt, qty})
           "delta"      — 增减数量 ({src, tgt, delta})
+          "system_delta"  — 系统间物品转移 ({tgt, item, delta})
+          "recipe"        — 配方转换 ({src, consumes, produces})
 
         返回: {status: "ok"|"partial"|"failed", results: [...]}
         """
@@ -275,6 +291,38 @@ class GraphEngine:
                     ok = self.modify_edge_quantity(src, tgt, delta)
                     results.append({"op": "delta", "src": src, "tgt": tgt, "delta": delta, "status": "ok" if ok else "skipped"})
                     if not ok:
+                        status = "partial"
+
+                elif op_type == "system_delta":
+                    item = op.get("item", "")
+                    delta = op.get("delta", 0)
+                    item_eid = self.resolve_eid(item) or item
+                    tgt_eid = self.resolve_eid(tgt) or tgt
+                    if tgt_eid and item_eid and delta != 0:
+                        self.modify_edge_quantity(tgt_eid, item_eid, delta)
+                        results.append({"op": "system_delta", "tgt": tgt_eid, "item": item_eid, "delta": delta, "status": "ok"})
+                    else:
+                        results.append({"op": "system_delta", "status": "skipped", "reason": "缺少 tgt/item/delta"})
+                        status = "partial"
+
+                elif op_type == "recipe":
+                    src = self.resolve_eid(src) or src
+                    consumes = op.get("consumes", {})
+                    produces = op.get("produces", {})
+                    if src and consumes and produces:
+                        recipe_ok = True
+                        for item_name, qty in consumes.items():
+                            item_eid = self.resolve_eid(item_name) or item_name
+                            if not self.modify_edge_quantity(src, item_eid, -qty):
+                                recipe_ok = False
+                        for item_name, qty in produces.items():
+                            item_eid = self.resolve_eid(item_name) or item_name
+                            self.modify_edge_quantity(src, item_eid, +qty)
+                        results.append({"op": "recipe", "src": src, "consumes": consumes, "produces": produces, "status": "ok" if recipe_ok else "partial"})
+                        if not recipe_ok:
+                            status = "partial"
+                    else:
+                        results.append({"op": "recipe", "status": "skipped", "reason": "缺少 src/consumes/produces"})
                         status = "partial"
 
                 elif op_type == "attr":
@@ -417,22 +465,22 @@ class GraphEngine:
         parts = ["## 区域世界"]
 
         for ent in self._entities.values():
-            if ent.entity_type == "zone":
+            if has_role(ent.type_id, "region"):
                 # 该区域的 NPC
                 npcs = []
                 for other in self._entities.values():
-                    if other.entity_type == "npc" and other.is_connected_to(ent.entity_id):
+                    if has_role(other.type_id, "actor") and other.is_connected_to(ent.entity_id):
                         npcs.append(other.name)
                 # 该区域的物体
                 objects = []
                 for other in self._entities.values():
-                    if other.entity_type == "object" and other.is_connected_to(ent.entity_id):
+                    if has_role(other.type_id, "fixture") and other.is_connected_to(ent.entity_id):
                         objects.append(other.name)
                 # 相连的区域
                 zone_conns = []
                 for conn in ent.connected_entity_ids:
                     e = self.get_entity(conn)
-                    if e and e.entity_type == "zone":
+                    if e and has_role(e.type_id, "region"):
                         zone_conns.append(e.name)
 
                 lines = [f"\n### {ent.name}"]
@@ -447,6 +495,76 @@ class GraphEngine:
                 parts.append("\n".join(lines))
 
         return "\n".join(parts)
+
+    # ═══════════════════════════════════════════
+    # 拓扑-内容分离视图
+    # ═══════════════════════════════════════════
+
+    def build_tagged_topology(
+        self, eid_list: list[str],
+    ) -> tuple[str, dict[str, str]]:
+        """
+        构建纯拓扑视角（无内容信息）。
+        返回抽象标签（标签）+ 连接的描述，以及 标签→entity_id 映射。
+        """
+        if not eid_list:
+            return "", {}
+
+        # 为每个 entity_id 分配抽象标签（大写字母）
+        label_to_eid: dict[str, str] = {}
+        eid_to_label: dict[str, str] = {}
+        for i, eid in enumerate(eid_list):
+            label = chr(65 + i)  # A, B, C, ... (最多 26 个)
+            label_to_eid[label] = eid
+            eid_to_label[eid] = label
+
+        lines = []
+        # 连接描述
+        conns = []
+        for eid in eid_list:
+            ent = self._entities.get(eid)
+            if not ent:
+                continue
+            src_label = eid_to_label.get(eid, "?")
+            for conn_eid in ent.connected_entity_ids:
+                if conn_eid in eid_to_label:
+                    dst_label = eid_to_label[conn_eid]
+                    edge = self._edge_by_pair.get((eid, conn_eid))
+                    qty = edge.quantity if edge else 0
+                    if qty == -1:
+                        conns.append(f"  {{{src_label}}} → {{{dst_label}}}")
+                    elif qty > 0:
+                        conns.append(f"  {{{src_label}}} → {{{dst_label}}}  qty:{qty}")
+                    else:
+                        conns.append(f"  {{{src_label}}} ↔ {{{dst_label}}}")
+
+        if conns:
+            lines.append("连接：")
+            lines.extend(conns)
+
+        # 标签
+        tag_lines = []
+        for label, eid in sorted(label_to_eid.items()):
+            ent = self._entities.get(eid)
+            if not ent:
+                continue
+            tags = []
+            if ent.conserved:
+                tags.append("conserved")
+            if hasattr(ent, 'type_id'):
+                from ..config.config_loader import is_terminal, is_same_type_blocked
+                if is_terminal(ent.type_id):
+                    tags.append("terminal")
+                if is_same_type_blocked(ent.type_id):
+                    tags.append("same_type_block")
+            if tags:
+                tag_lines.append(f"  {{{label}}}: [{', '.join(tags)}]")
+
+        if tag_lines:
+            lines.append("\n标签：")
+            lines.extend(tag_lines)
+
+        return "\n".join(lines), label_to_eid
 
     # ═══════════════════════════════════════════
     # 辅助
@@ -494,13 +612,14 @@ class GraphEngine:
             ent = Entity(
                 entity_id=eid,
                 name=edata.get("name", eid),
-                entity_type=edata.get("entity_type", "npc"),
+                entity_type=edata.get("entity_type", ""),
             )
             ent.role = edata.get("role", "")
             ent.traits = list(edata.get("traits", []))
             ent.desc = edata.get("desc", "")
             ent.attributes = dict(edata.get("attributes", {}))
             ent.connected_entity_ids = set(edata.get("connected_entity_ids", []))
+            ent.conserved = edata.get("conserved", False)
             self._entities[eid] = ent
 
         for edata in data.get("edges", []):
@@ -527,11 +646,20 @@ def _extract_name_from_eid(eid: str) -> str:
 
 
 def _infer_type(eid: str) -> str:
-    """从 entity_id 推断实体类型字符串（内容层），用于 Entity.__init__"""
+    """从 entity_id 推断实体类型字符串（内容层），仅供显示"""
     tid = prefix_to_type_id(eid)
     if tid:
-        from ..config.node_ontology import TYPE_NAME_TO_ID
-        rev = {v: k for k, v in TYPE_NAME_TO_ID.items()}
-        return rev.get(tid, "")
+        tdef = get_type_def(tid)  # type: ignore
+        return tdef.get("id", "") if tdef else ""
     return ""
+
+
+def _is_item_type(eid: str) -> bool:
+    """判断实体 ID 是否为物品类型（守恒量候选）"""
+    tid = prefix_to_type_id(eid)
+    if not tid:
+        # fallback: 以 'item_' 前缀开头的视为物品
+        return eid.startswith("item_")
+    from ..config.config_loader import has_role
+    return has_role(tid, "thing")
 

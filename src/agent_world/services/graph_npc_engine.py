@@ -25,6 +25,7 @@ from ..entities.manager import get_entity_manager, init_entity_manager
 from ..models.npc import NPC, Position
 from ..models.world import World, Zone
 
+from ..config.config_loader import has_role
 from ..cognition.npc_prompt_builder import build_one_npc_prompt
 
 from .graph_engine import GraphEngine
@@ -91,11 +92,13 @@ class GraphNPCEngine:
     """
 
     def __init__(self, llm_available: bool = False, llm_callback=None,
-                 llm_model: str | None = None, llm_temperature: float = 0.7):
+                 llm_model: str | None = None, llm_temperature: float = 0.7,
+                 small: bool = False):
         self.llm_available = llm_available
         self.llm_callback = llm_callback
         self._llm_model = llm_model
         self._llm_temperature = llm_temperature
+        self._small_mode = small
         self._resolver: InteractionResolver | None = None
         self._listeners: list[Callable] = []
         self._running = False
@@ -120,19 +123,11 @@ class GraphNPCEngine:
                 pass
 
     def _ensure_world_initialized(self):
-        """确保实体管理器已初始化 + 数据库中有 NPC"""
+        """确保实体管理器已初始化 + 数据库中有 NPC（从 node_config.json 加载区域）"""
         if self._world_initialized:
             return
-        zones = [
-            {"id": "village_square", "zone_type": "village_square"},
-            {"id": "farm", "zone_type": "farm"},
-            {"id": "market", "zone_type": "market"},
-            {"id": "tavern", "zone_type": "tavern"},
-            {"id": "barracks", "zone_type": "barracks"},
-            {"id": "library", "zone_type": "library"},
-            {"id": "temple", "zone_type": "temple"},
-            {"id": "forest", "zone_type": "forest"},
-        ]
+        from ..config.config_loader import build_zone_models
+        zones = build_zone_models()
         init_entity_manager(zones)
 
         with get_session() as conn:
@@ -140,7 +135,7 @@ class GraphNPCEngine:
             existing = npc_db.get_all_npcs()
             if not existing:
                 from ..models.npc_defaults import create_diverse_npcs
-                default_npcs = create_diverse_npcs()
+                default_npcs = create_diverse_npcs(small=self._small_mode)
                 for npc in default_npcs:
                     npc_db.create_npc(npc)
                 logger.info(f"初始化 {len(default_npcs)} 个默认 NPC 到数据库")
@@ -233,19 +228,21 @@ class GraphNPCEngine:
         return results
 
     def _get_zones(self) -> list[Zone]:
-        zone_defs = [
-            ("village_square", ["farm", "market", "tavern", "barracks", "library", "temple"]),
-            ("farm", ["village_square"]),
-            ("market", ["village_square"]),
-            ("tavern", ["village_square"]),
-            ("barracks", ["village_square"]),
-            ("library", ["village_square"]),
-            ("temple", ["village_square"]),
-            ("forest", ["village_square"]),
-        ]
-        return [Zone(id=zid, name=zid, zone_type=zid,
-                     bounds={"min_x": 0, "min_y": 0, "max_x": 100, "max_y": 100},
-                     connected_zones=conns) for zid, conns in zone_defs]
+        from ..config.config_loader import build_zone_model_full, get_zones as get_config_zones
+        zones = []
+        for zdef in get_config_zones():
+            full = build_zone_model_full(zdef["id"])
+            if full is None:
+                continue
+            zones.append(Zone(
+                id=full["id"],
+                name=full["name"],
+                zone_type=full["zone_type"],
+                bounds=full["bounds"],
+                capacity=full["capacity"],
+                connected_zones=full["connected_zones"],
+            ))
+        return zones
 
 
 
@@ -295,21 +292,63 @@ class GraphNPCEngine:
             world_time_str=self._current_world_time_str,
             tick_duration_str=self._tick_duration_str,
         )
-        stories = [e.description for e in edge_results]
-        logger.info(f"[LLM #3] {len(edge_results)} 条边故事")
+        # 按故事文本去重：同一 Component 的 NPC 共享一个故事，不重复发送给 LLM #4
+        stories = list(dict.fromkeys(e.description for e in edge_results))
+        logger.info(f"[LLM #3] {len(edge_results)} 条边故事 → {len(stories)} 个唯一故事")
 
-        # ─── Step 5: LLM #4 (PostProcessor) — 故事 + 拓扑 → 数值增量 + 近况投影 ───
+        # ─── Step 5a: LLM #4a — 拓扑层操作 (delta / system_delta / recipe) ───
         pp = PostProcessor(resolver=self._resolver)
-        delta_ops, recent_info_map = pp.resolve_topology_deltas(
+        topo_ops = pp.resolve_topology_changes(
             npc_plans=npc_plans,
             stories=stories,
             graph_engine=self.graph_engine,
             world_time_str=self._current_world_time_str,
             tick_duration_str=self._tick_duration_str,
         )
-        logger.info(f"[LLM #4] {len(delta_ops)} 个数值增量, {len(recent_info_map)} 条近况")
+        logger.info(f"[LLM #4a] {len(topo_ops)} 个拓扑操作")
 
-        # 写入近况投影到实体（类型无关，根据 has_recent_info 过滤）
+        # 保存供后续使用
+        self._last_delta_ops = topo_ops
+
+        # ═══ 度守恒校验（Step 5.5）═══════════════════════════════
+        if topo_ops:
+            from .conservation_validator import ConservationValidator
+            cv = ConservationValidator(self.graph_engine)
+            outcome = cv.validate_deltas(topo_ops)
+            if outcome.result.value in ("hard_fail",):
+                logger.error(f"[度守恒] HARD_FAIL — 拒绝写入: {outcome.message}")
+                for det in outcome.details:
+                    logger.error(f"[度守恒]   {det}")
+                topo_ops = []
+                logger.warning(f"[度守恒] 已丢弃全部拓扑操作")
+            elif outcome.result.value in ("soft_warn",):
+                logger.warning(f"[度守恒] SOFT_WARN: {outcome.message}")
+                for det in outcome.details:
+                    logger.warning(f"[度守恒]   {det}")
+            else:
+                logger.info(f"[度守恒] {outcome.message}")
+                for det in outcome.details:
+                    logger.info(f"[度守恒]   {det}")
+
+        # ─── Step 5b: 执行 #4a 拓扑操作 ───
+        if topo_ops:
+            result = self.graph_engine.apply_edge_operations(topo_ops)
+            logger.info(f"[Engine] #4a 拓扑操作执行: {result['status']}")
+            if result.get("errors"):
+                for err in result["errors"]:
+                    logger.warning(f"[Engine]   增量错误: {err}")
+
+        # ─── Step 5c: LLM #4b — 内容层操作 (attr + recent_info) ───
+        attr_ops, recent_info_map = pp.resolve_attr_and_recent(
+            npc_plans=npc_plans,
+            stories=stories,
+            graph_engine=self.graph_engine,
+            world_time_str=self._current_world_time_str,
+            tick_duration_str=self._tick_duration_str,
+        )
+        logger.info(f"[LLM #4b] {len(attr_ops)} attr, {len(recent_info_map)} 条近况")
+
+        # ─── Step 5d: 写入近况投影到实体 ───
         if recent_info_map:
             from ..config.node_ontology import has_recent_info
             written = 0
@@ -321,13 +360,10 @@ class GraphNPCEngine:
             if written:
                 logger.info(f"[LLM #4b] 近况投影写入 {written} 个实体")
 
-        # 保存本轮 delta_ops 供后续使用
-        self._last_delta_ops = delta_ops
-
-        # ─── Step 6: GraphEngine — 执行数值增量 ───
-        if delta_ops:
-            result = self.graph_engine.apply_edge_operations(delta_ops)
-            logger.info(f"[Engine] 数值增量执行: {result['status']} ({len(result['results'])} 条)")
+        # ─── Step 5e: 执行 #4b attr 操作 ───
+        if attr_ops:
+            result = self.graph_engine.apply_edge_operations(attr_ops)
+            logger.info(f"[Engine] #4b attr 执行: {result['status']} ({len(result['results'])} 条)")
             if result.get("errors"):
                 for err in result["errors"]:
                     logger.warning(f"[Engine]   增量错误: {err}")
@@ -346,7 +382,7 @@ class GraphNPCEngine:
                 # 通过 1-hop 子图找当前区域
                 for conn in ent.connected_entity_ids:
                     e = self.graph_engine.get_entity(conn)
-                    if e and e.entity_type == "zone":
+                    if e and has_role(e.type_id, "region"):
                         zone_now = e.name
                         break
                 vitality_now = int(ent.attributes.get("vitality", 100))
@@ -388,9 +424,6 @@ class GraphNPCEngine:
             if not ent:
                 continue
 
-            # 1-hop 子图文本（包含自身描述 + 连接信息）
-            subgraph_text = self.graph_engine.get_1hop_subgraph_text(neid)
-
             # 库存
             inv = self.graph_engine.get_inventory_view(neid)
 
@@ -408,9 +441,9 @@ class GraphNPCEngine:
             zone_npcs = []
             for conn in ent.connected_entity_ids:
                 e = self.graph_engine.get_entity(conn)
-                if e and e.entity_type == "zone":
+                if e and has_role(e.type_id, "region"):
                     for other_ent in self.graph_engine.all_entities():
-                        if other_ent.entity_type == "npc" and other_ent != ent \
+                        if has_role(other_ent.type_id, "actor") and other_ent != ent \
                            and other_ent.is_connected_to(e.entity_id):
                             zone_npcs.append({"name": other_ent.name, "role": other_ent.role or "?"})
                     break
@@ -427,7 +460,6 @@ class GraphNPCEngine:
                 world_time_str=self._current_world_time_str,
                 tick_duration_str=self._tick_duration_str,
                 recipes=None,
-                topology_subgraph=subgraph_text,
             )
 
             npc_prompts.append((neid, prompt))
@@ -459,7 +491,7 @@ class GraphNPCEngine:
                 if ent:
                     for conn in ent.connected_entity_ids:
                         e = self.graph_engine.get_entity(conn)
-                        if e and e.entity_type == "zone":
+                        if e and has_role(e.type_id, "region"):
                             zone_name = e.name
                             break
                 npc_plans[neid] = f"我在{zone_name}看看有什么可以做的。"
@@ -507,7 +539,7 @@ class GraphNPCEngine:
             if ent:
                 for conn in ent.connected_entity_ids:
                     e = self.graph_engine.get_entity(conn)
-                    if e and e.entity_type == "zone":
+                    if e and has_role(e.type_id, "region"):
                         zone_name = e.name
                         break
 
@@ -518,9 +550,9 @@ class GraphNPCEngine:
                 if tgt != neid:
                     tgt_ent = self.graph_engine.get_entity(tgt)
                     if tgt_ent:
-                        if tgt_ent.entity_type == "zone":
+                        if has_role(tgt_ent.type_id, "region"):
                             zone_name = tgt_ent.name if op.get("op") == "connect" else zone_name
-                        elif tgt_ent.entity_type in ("npc", "object"):
+                        elif has_role(tgt_ent.type_id, "actor") or has_role(tgt_ent.type_id, "fixture"):
                             interacted_entities.append(tgt_ent.name)
 
             # 为 LLM #3 准备节点信息
@@ -570,7 +602,7 @@ class GraphNPCEngine:
                 if ent:
                     for conn in ent.connected_entity_ids:
                         e = self.graph_engine.get_entity(conn)
-                        if e and e.entity_type == "zone":
+                        if e and has_role(e.type_id, "region"):
                             zone_name = e.name
                             break
 
@@ -643,7 +675,7 @@ class GraphNPCEngine:
             # 位置：从 1-hop 子图中找 zone 连接
             for conn in ent.connected_entity_ids:
                 e = self.graph_engine.get_entity(conn)
-                if e and e.entity_type == "zone":
+                if e and has_role(e.type_id, "region"):
                     npc.position.zone_id = e.name
                     break
 

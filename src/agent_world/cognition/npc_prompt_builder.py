@@ -6,10 +6,10 @@ NPC Prompt Builder —— 为每个 NPC 构建推理上下文（LLM #1 输入）
   - 最近经历（记忆）
   - 性格标签
   - 库存
-  - 拓扑子图（1-hop 连接关系）
   - 同区域 NPC
 
-LLM #1 只读拓扑，不写数据。
+LLM #1 只读内容（属性/库存/近况），不读拓扑。
+拓扑信息由 LLM #2 独立处理。
 输出自然语言计划，供 LLM #2 解析为拓扑结构变更。
 """
 
@@ -30,7 +30,6 @@ def build_one_npc_prompt(
     world_time_str: str | None = None,
     tick_duration_str: str | None = None,
     recipes: list[dict] | None = None,
-    topology_subgraph: str | None = None,
 ) -> str:
     """
     为一个 NPC 构建完整的推理 prompt。
@@ -43,7 +42,6 @@ def build_one_npc_prompt(
         personality_tags: 性格标签列表
         inventory: 库存 [{item_name, quantity, item_id}]
         zone_npcs: 同区域的其他 NPC
-        topology_subgraph: 1-hop 拓扑子图的文本描述
 
     Returns:
         格式化的 prompt 字符串
@@ -124,13 +122,7 @@ def build_one_npc_prompt(
     else:
         parts.append("### 当前持有\n空手\n")
 
-    # 拓扑子图
-    if topology_subgraph:
-        parts.append("### 当前拓扑视图")
-        parts.append(topology_subgraph)
-        parts.append("")
-
-    # 同区域的其他 NPC
+    # 同区域的其他 NPC（纯内容：角色名）
     if zone_npcs:
         other_str = "、".join(f"{zn['name']}（{zn['role']}）" for zn in zone_npcs)
         parts.append(f"### 当前区域还有\n{other_str}\n")

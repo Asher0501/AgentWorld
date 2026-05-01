@@ -1,0 +1,233 @@
+{
+  "version": "1.0",
+  "description": "AgentWorld 节点配置 — 定义所有节点类型、开关、实体和世界拓扑",
+
+  "world": {
+    "default_time": {
+      "hour": 8,
+      "minute": 0,
+      "day": 1,
+      "month": 1,
+      "year": 1
+    },
+    "zone_connections": [
+      {"from": "village_square", "to": ["market", "tavern", "library", "barracks", "temple", "farm", "forest"]},
+      {"from": "market",        "to": ["village_square", "farm"]},
+      {"from": "tavern",        "to": ["village_square", "forest"]},
+      {"from": "farm",          "to": ["village_square", "market"]},
+      {"from": "forest",        "to": ["village_square", "tavern"]},
+      {"from": "library",       "to": ["village_square", "temple"]},
+      {"from": "temple",        "to": ["village_square", "library", "barracks"]},
+      {"from": "barracks",      "to": ["village_square", "temple"]},
+      {"from": "south_market",  "to": ["market"]},
+      {"from": "east_tavern",   "to": ["tavern"]}
+    ]
+  },
+
+  "node_types": [
+    {
+      "id": "npc",
+      "prefix": "npc_",
+      "comment": "角色节点 — BFS 全展开",
+      "roles": ["actor"],
+      "switches": {
+        "terminal": false,
+        "same_type_block": false,
+        "has_recent_info": true
+      },
+      "prompt": {
+        "category": "角色",
+        "order": 2,
+        "fields": ["name", "role", "mood", "satiety", "vitality", "traits", "intent"]
+      },
+      "properties": {
+        "has_attributes": true,
+        "has_inventory": true
+      }
+    },
+    {
+      "id": "zone",
+      "prefix": "zone_",
+      "comment": "区域节点 — 同类型阻断（zone↔zone不通）",
+      "roles": ["region", "container"],
+      "switches": {
+        "terminal": false,
+        "same_type_block": true,
+        "has_recent_info": true
+      },
+      "prompt": {
+        "category": "场所",
+        "order": 1,
+        "fields": ["name", "description"]
+      },
+      "properties": {}
+    },
+    {
+      "id": "item",
+      "prefix": "item_",
+      "comment": "物品节点 — BFS 叶子节点",
+      "roles": ["thing", "tradable"],
+      "switches": {
+        "terminal": true,
+        "same_type_block": false,
+        "has_recent_info": true
+      },
+      "prompt": {
+        "category": "物品",
+        "order": 3
+      },
+      "properties": {}
+    },
+    {
+      "id": "object",
+      "prefix": "obj_",
+      "comment": "物件节点 — BFS 叶子节点，不支持 recent_info",
+      "roles": ["fixture"],
+      "switches": {
+        "terminal": true,
+        "same_type_block": false,
+        "has_recent_info": false
+      },
+      "prompt": {
+        "category": "物件",
+        "order": 3
+      },
+      "properties": {}
+    }
+  ],
+
+  "entities": {
+    "zones": [
+      {
+        "id": "village_square",
+        "name": "村庄广场",
+        "type": "zone",
+        "zone_type": "village_square",
+        "description": "村庄的中心广场，NPC 们在这里交流与交易。",
+        "bounds": {"min_x": 40, "min_y": 40, "max_x": 60, "max_y": 60},
+        "capacity": 20
+      },
+      {
+        "id": "market",
+        "name": "市场区",
+        "type": "zone",
+        "zone_type": "market",
+        "description": "热闹的集市，商贩们在叫卖商品。",
+        "bounds": {"min_x": 60, "min_y": 40, "max_x": 80, "max_y": 60},
+        "capacity": 20
+      },
+      {
+        "id": "tavern",
+        "name": "酒馆",
+        "type": "zone",
+        "zone_type": "tavern",
+        "description": "温暖的酒馆，旅人和村民们在这里休息闲聊。",
+        "bounds": {"min_x": 20, "min_y": 40, "max_x": 40, "max_y": 60},
+        "capacity": 15
+      },
+      {
+        "id": "farm",
+        "name": "农场",
+        "type": "zone",
+        "zone_type": "farm",
+        "description": "绿油油的农田，农民们在耕作。",
+        "bounds": {"min_x": 60, "min_y": 20, "max_x": 80, "max_y": 40},
+        "capacity": 10
+      },
+      {
+        "id": "mine",
+        "name": "矿场",
+        "type": "zone",
+        "zone_type": "mine",
+        "description": "阴暗的矿场，矿工们挖掘珍贵的矿石。",
+        "bounds": {"min_x": 80, "min_y": 60, "max_x": 100, "max_y": 80},
+        "capacity": 8
+      },
+      {
+        "id": "forest",
+        "name": "森林",
+        "type": "zone",
+        "zone_type": "forest",
+        "description": "茂密的森林，偶尔有野兽出没。",
+        "bounds": {"min_x": 0, "min_y": 60, "max_x": 20, "max_y": 80},
+        "capacity": 10
+      },
+      {
+        "id": "library",
+        "name": "图书馆",
+        "type": "zone",
+        "zone_type": "library",
+        "description": "宁静的图书馆，学者们在此研究。",
+        "bounds": {"min_x": 40, "min_y": 20, "max_x": 60, "max_y": 40},
+        "capacity": 10
+      },
+      {
+        "id": "temple",
+        "name": "神庙",
+        "type": "zone",
+        "zone_type": "temple",
+        "description": "庄严的神庙，治疗师在这里治愈伤痛。",
+        "bounds": {"min_x": 20, "min_y": 20, "max_x": 40, "max_y": 40},
+        "capacity": 10
+      },
+      {
+        "id": "barracks",
+        "name": "兵营",
+        "type": "zone",
+        "zone_type": "barracks",
+        "description": "士兵们训练的地方。",
+        "bounds": {"min_x": 0, "min_y": 20, "max_x": 20, "max_y": 40},
+        "capacity": 15
+      },
+      {
+        "id": "outskirts",
+        "name": "城郊",
+        "type": "zone",
+        "zone_type": "outskirts",
+        "description": "安静的城郊，偶尔有流浪者经过。",
+        "bounds": {"min_x": 0, "min_y": 80, "max_x": 20, "max_y": 100},
+        "capacity": 8
+      },
+      {
+        "id": "south_market",
+        "name": "南集市",
+        "type": "zone",
+        "zone_type": "market",
+        "description": "南边的集市，热闹非凡",
+        "bounds": {"min_x": 60, "min_y": 60, "max_x": 80, "max_y": 80},
+        "capacity": 15
+      },
+      {
+        "id": "east_tavern",
+        "name": "东街酒馆",
+        "type": "zone",
+        "zone_type": "tavern",
+        "description": "东街的酒馆，老张常去",
+        "bounds": {"min_x": 80, "min_y": 20, "max_x": 100, "max_y": 40},
+        "capacity": 10
+      }
+    ],
+
+    "items": [
+      {"id": "小麦", "name": "小麦", "type": "item", "description": "金黄的麦粒"},
+      {"id": "蔬菜", "name": "蔬菜", "type": "item", "description": "新鲜的蔬菜"},
+      {"id": "皮毛", "name": "皮毛", "type": "item", "description": "处理好的兽皮"},
+      {"id": "工具", "name": "工具", "type": "item", "description": "铁制农具或工具"},
+      {"id": "铁矿石", "name": "铁矿石", "type": "item", "description": "未冶炼的铁矿石"},
+      {"id": "米酒", "name": "米酒", "type": "item", "description": "醇香的米酒"},
+      {"id": "金币", "name": "金币", "type": "item", "description": "通用货币"},
+      {"id": "书籍", "name": "书籍", "type": "item", "description": "各种知识的书"},
+      {"id": "草药", "name": "草药", "type": "item", "description": "采集的药草"}
+    ],
+
+    "objects": [
+      {"id": "well", "name": "水井", "type": "object", "zone": "village_square", "description": "村子里的水井"},
+      {"id": "notice_board", "name": "告示板", "type": "object", "zone": "village_square", "description": "贴满告示的木板"},
+      {"id": "market_stall", "name": "摊位", "type": "object", "zone": "market", "description": "市场里的摊位"},
+      {"id": "bar", "name": "吧台", "type": "object", "zone": "tavern", "description": "酒馆的吧台"}
+    ],
+
+    "npcs": [
+    ]
+  }
+}

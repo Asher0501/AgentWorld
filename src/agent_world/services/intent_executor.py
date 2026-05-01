@@ -23,6 +23,7 @@ import logging
 import re
 from typing import Any
 
+from ..config.config_loader import has_role
 from .graph_engine import GraphEngine
 
 logger = logging.getLogger("intent_executor")
@@ -80,68 +81,77 @@ class IntentResolver:
     def _build_prompt(self, npc_eid: str, plan: str) -> str:
         """
         为单个 NPC 构建 prompt。
-
-        输入：NPC 的当前拓扑子图 + 自然语言计划
-        输出：该 NPC 应该执行的结构变更操作
+        输出 [拓扑] + [内容] 分离的两段。
         """
         ent = self._graph.get_entity(npc_eid)
         if not ent:
             return ""
 
-        # 拓扑视图
-        subgraph = self._graph.get_1hop_subgraph_text(npc_eid)
+        # 收集拓扑相关实体 ID
+        topo_eids = {npc_eid}
+        for conn_eid in ent.connected_entity_ids:
+            topo_eids.add(conn_eid)
+            ce = self._graph.get_entity(conn_eid)
+            if ce:
+                # 如果是区域，加入同区域 NPC
+                if has_role(ce.type_id, "region"):
+                    for other in self._graph.all_entities():
+                        if has_role(other.type_id, "actor") and other.entity_id != npc_eid \
+                           and other.is_connected_to(conn_eid):
+                            topo_eids.add(other.entity_id)
+                            # 也加入它们的连接
+                            for oconn in other.connected_entity_ids:
+                                if oconn not in topo_eids:
+                                    ce2 = self._graph.get_entity(oconn)
+                                    if ce2 and has_role(ce2.type_id, "thing"):
+                                        topo_eids.add(oconn)
+
+        # [拓扑] 段：纯标签，无名称/类型
+        topo_text, label_map = self._graph.build_tagged_topology(list(topo_eids))
+
+        # [内容] 段：标签映射 + 语义信息
+        content_lines = []
+        content_lines.append("标签映射：")
+        for label, eid in sorted(label_map.items(), key=lambda x: x[0]):
+            e = self._graph.get_entity(eid)
+            name = e.name if e else eid
+            content_lines.append(f"  {{{label}}} = {name}  ({eid})")
+        content_lines.append("")
 
         # NPC 自身描述
-        self_desc = ent.to_prompt_block()
+        content_lines.append("自身描述：")
+        content_lines.append(ent.to_prompt_block())
+        content_lines.append("")
 
         # 库存
         inventory = self._graph.get_inventory_view(npc_eid)
-        inv_str = "、".join(
-            f"{i['item_name']}x{i['quantity']}" for i in inventory
-        ) if inventory else "（空）"
+        if inventory:
+            inv_str = "、".join(
+                f"{i['item_name']}x{i['quantity']}" for i in inventory
+            )
+            content_lines.append(f"持有：{inv_str}")
+            content_lines.append("")
 
-        # Zone 信息
-        zone_name = "?"
-        for conn in ent.connected_entity_ids:
-            e = self._graph.get_entity(conn)
-            if e and e.entity_type == "zone":
-                zone_name = e.name
-                break
+        # 计划（纯内容）
+        content_lines.append(f"计划：{plan}")
+        content_lines.append("")
 
-        # 同区域的其他 NPC（纯拓扑数据）
-        same_zone_npcs = []
-        for conn in ent.connected_entity_ids:
-            e = self._graph.get_entity(conn)
-            if e and e.entity_type == "zone" and e.name == zone_name:
-                for other in self._graph.all_entities():
-                    if other.entity_type == "npc" and other.entity_id != npc_eid \
-                       and other.is_connected_to(conn):
-                        same_zone_npcs.append(other.name)
-                break
-
-        # 在子图中追加同区域 NPC 信息
-        if same_zone_npcs:
-            subgraph += f"\n### 同区域中的其他实体\n"
-            subgraph += f"  {', '.join(same_zone_npcs)} 也连接着 {zone_name}\n"
+        # 操作指令
+        content_lines.append("=== 指令 ===")
+        content_lines.append("输出你需要执行的拓扑操作。用 [内容] 标签映射中的 entity_id 作为 src/tgt。")
+        content_lines.append("格式（JSON 数组）：")
+        content_lines.append(f'  [{{"op":"connect","src":"{npc_eid}","tgt":"zone_南集市","qty":0}}]')
+        content_lines.append("可用的 op：")
+        content_lines.append('  "connect"    — 建立连接')
+        content_lines.append('  "disconnect" — 断开连接')
+        content_lines.append("重要规则：")
+        content_lines.append("1. 你只负责拓扑结构，不改数值。物品持有变更由 LLM #4 处理。")
+        content_lines.append("2. 区域连接用 qty=-1，NPC↔NPC 连接用 qty=0。")
+        content_lines.append("3. 输出纯 JSON，不要多余文字，不要 markdown。")
 
         return (
-            f"你是 NPC {ent.name}，位于 {zone_name}。\n"
-            f"持有：{inv_str}\n"
-            f"自我描述：\n{self_desc}\n\n"
-            f"当前拓扑视图：\n{subgraph}\n\n"
-            f"你的计划：{plan}\n\n"
-            f"=== 指令 ===\n"
-            f"输出你需要执行的拓扑操作来执行此计划。\n"
-            f"你在 {zone_name}，只能操作你所在区域的实体。\n\n"
-            f"格式（JSON 数组）：\n"
-            f'[{{"op":"connect","src":"{npc_eid}","tgt":"zone_南集市","qty":0}}]\n\n'
-            f"可用的 op：\n"
-            f'  "connect"    — 建立连接（NPC→Zone 或 NPC→NPC）\n'
-            f'  "disconnect" — 断开连接（NPC→Zone 或 NPC→NPC）\n\n'
-            f"重要规则：\n"
-            f"1. 你只负责拓扑结构，不改数值。物品持有变更由 LLM #4 处理。\n"
-            f"2. 区域连接用 qty=-1，NPC↔NPC 连接用 qty=0。\n"
-            f"3. 输出纯 JSON，不要多余文字，不要 markdown。"
+            f"==== [拓扑] ====\n{topo_text}\n\n"
+            f"==== [内容] ====\n" + "\n".join(content_lines)
         )
 
     def _build_combined_prompt(self, items: list[tuple[str, str]]) -> str:
@@ -150,11 +160,12 @@ class IntentResolver:
             "你是一个世界模拟引擎的拓扑结构变更模块（LLM #2）。",
             "你的任务：根据每个 NPC 的自然语言计划，输出拓扑结构变更操作。",
             "",
+            "每个 NPC 的 prompt 分为 [拓扑]（纯结构，无名称）和 [内容]（语义信息+标签映射）两段。",
+            "输出时使用 [内容] 段的 entity_id。",
+            "",
             f"共 {len(items)} 个 NPC。",
             "",
         ]
-
-
 
         for i, (eid, prompt) in enumerate(items):
             parts.append(f"==== NPC {i+1}: {eid} ====")
@@ -226,7 +237,7 @@ class IntentResolver:
             # 检测移动意图
             for conn in ent.connected_entity_ids:
                 e = self._graph.get_entity(conn)
-                if e and e.entity_type == "zone":
+                if e and has_role(e.type_id, "region"):
                     current_zone = e.name
                     break
             else:

@@ -441,3 +441,133 @@ agent_world/
 
 This design allows a different game world to be created by swapping
 configuration files — no engine code changes required.
+
+
+
+
+---
+
+# Prompt Topology–Content Decoupling
+
+## Principle
+
+The same topology–content decoupling that governs the engine also governs
+prompts. A prompt's topological constraints and its content instructions
+must be strictly separated, with zero cross-reference between them.
+
+The engine does not know what a node semantically represents — it only
+sees type_ids and configuration tags. The prompt's topological section
+follows the same rule: it references only tags and structural rules,
+never entity semantics. The content section has the opposite boundary:
+it carries all semantic information but never references topological rules.
+
+Separation must be strict. A topological constraint that mentions a
+specific entity name or type is a violation — no different from writing
+`if type == "npc"` in the engine.
+
+## Why This Matters
+
+This is the same architectural boundary, projected onto the prompt layer.
+
+## Determining Which LLM Gets Topology
+
+The decision of whether a given LLM sees topology information follows one
+criterion: **does the LLM's output directly operate on the graph?**
+
+| Layer | Output | Operates on graph? | Needs topology? |
+|-------|--------|--------------------|-----------------|
+| LLM #1 | Natural language plan (text) | No — plan is read by next layer | No |
+| LLM #2 | `connect` / `disconnect` | **Yes** — changes graph structure | **Yes** |
+| LLM #3 | Story (text) | No — story is read by next layer | No |
+| LLM #4 | `delta` / `attr` (quantities) | **Yes** — changes edge quantities | **Yes** |
+
+Abstracted to any domain:
+
+- **LLMs that output text** (plans, stories, explanations, analyses) do not
+  need topology information. Their output is consumed by another component
+  (human, LLM, or processor), not by the graph engine. They only need
+  content: names, states, attributes, relationships described in natural
+  language.
+
+- **LLMs that output graph operations** (structure changes, quantity
+  adjustments, edge mutations) need topology information. Their output is
+  consumed directly by the graph engine. They need to know the graph
+  structure to produce valid operations.
+
+In a protein network:
+
+- An LLM deciding which proteins should form binding sites → operates on
+  graph structure → **needs topology**.
+- An LLM deciding signal molecule flow quantities along existing edges →
+  operates on graph quantities → **needs topology**.
+- An LLM describing a protein's own conformational change → outputs text →
+  **needs only content**.
+- An LLM narrating the entire signaling cascade → outputs text →
+  **needs only content**.
+
+**One rule: ignore what the LLM reads; look at where its output lands.**
+If the output lands on the graph (edge structure or edge quantity), the
+LLM needs topology. If the output lands outside the graph (text), it
+does not.
+
+
+## Prompt Ordering: Guard Clause Pattern
+
+### Principle
+
+Instructions in LLM prompts must be ordered like guard clauses in code:
+the most specific, least probable case first; the most generic, most
+probable case last.
+
+```python
+# ❌ Wrong — common case first, LLM short-circuits:
+if has_counterpart: bilateral_delta()
+elif from_system: system_delta()
+elif is_recipe: recipe()
+
+# ✅ Right — guard clauses first, generic fallback last:
+if is_recipe: recipe()
+elif from_system: system_delta()
+# elif from_counterpart: bilateral_delta()  ← this is the implicit default
+```
+
+### Why This Matters
+
+LLMs process prompts sequentially and exhibit a **recency bias toward
+matching** — they tend to match the first instruction that fits the
+situation, especially if it's a common pattern. If "use delta for
+bilateral trades" appears first, the LLM will write delta for
+everything, never reaching the system_delta or recipe cases.
+
+By reversing the order — exceptions first, common case last — each
+instruction acts as a gate: the LLM checks "is this a recipe?" before
+falling through to "is this a bilateral trade?" This mirrors the
+**happy path** pattern: exceptions are handled early, and the common
+path is the implicit default.
+
+### Rule of Thumb
+
+Order prompt sections from:
+
+```
+1. Most constrained / smallest intersection  (finest granularity)
+2. More constrained / medium intersection
+3. Least constrained / default match         (coarsest granularity)
+```
+
+The last instruction should always be the general-purpose fallback
+that covers the majority of cases. If the LLM reaches it, it has
+already ruled out all the special cases.
+
+### In This Project
+
+The LLM #4 operation type guide follows this pattern:
+
+```
+1. recipe         — most specific (crafting, internal balance)
+2. system_delta   — medium (item enters/leaves simulation boundary)
+3. delta          — most common (bilateral trade, Σ=0)
+```
+
+This ensures the LLM considers "is this a recipe?" first, before
+falling through to "is this a regular trade?"

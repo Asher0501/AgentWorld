@@ -455,9 +455,24 @@ DEFAULT_NPCS = [
     ("小虎子", NPCRole.WANDERER, make_messenger, 0),
 ]
 
-def create_diverse_npcs() -> list[NPC]:
-    """创建 16 个 NPC"""
+# 小型测试集：6 个 NPC（精简经济模型）
+SMALL_NPCS = [
+    # 农民 (2)
+    ("老张", NPCRole.FARMER, make_farmer, 0),
+    ("田嫂", NPCRole.FARMER, make_farmer2, 0),
+    # 市场 / 商业 (3)
+    ("王老板", NPCRole.MERCHANT, make_merchant, 0),
+    ("铁匠王", NPCRole.ARTISAN, make_artisan, 0),
+    ("张大娘", NPCRole.MERCHANT, make_market_owner, 0),
+    # 酒馆 (1)
+    ("老陈", NPCRole.MERCHANT, make_tavern_owner, 0),
+]
+
+
+def create_diverse_npcs(small: bool = False) -> list[NPC]:
+    """创建 NPC 列表"""
+    source = SMALL_NPCS if small else DEFAULT_NPCS
     npcs = []
-    for name, role, factory, seed in DEFAULT_NPCS:
+    for name, role, factory, seed in source:
         npcs.append(factory(name, seed))
     return npcs
