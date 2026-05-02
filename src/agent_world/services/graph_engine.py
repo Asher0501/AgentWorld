@@ -89,6 +89,13 @@ class GraphEngine:
         # 未注册实体：根据 eid 前缀判断
         return _is_item_type(entity_id)
 
+    def is_terminal(self, entity_id: str) -> bool:
+        """查询实体是否终止 BFS 扩展"""
+        ent = self._entities.get(entity_id)
+        if ent:
+            return ent.is_leaf
+        return False
+
     def find_entity_by_name(self, name: str) -> Entity | None:
         """按名称查找实体"""
         for ent in self._entities.values():
@@ -137,8 +144,9 @@ class GraphEngine:
         self._graph.add_edge(edge)
         self._edge_by_pair[(src_eid, tgt_eid)] = edge
 
-        # 实体间连接
+        # 实体间连接（双向）
         self._entities[src_eid].connect_to(tgt_eid)
+        self._entities[tgt_eid].connect_to(src_eid)
 
         logger.debug(f"[Graph] 连接: {src_eid} ──▸ {tgt_eid} (qty={qty})")
         return edge
@@ -150,6 +158,8 @@ class GraphEngine:
             del self._edge_by_pair[(src_eid, tgt_eid)]
         if src_eid in self._entities:
             self._entities[src_eid].disconnect_from(tgt_eid)
+        if tgt_eid in self._entities:
+            self._entities[tgt_eid].disconnect_from(src_eid)
         if removed:
             logger.debug(f"[Graph] 断开连接: {src_eid} ─/─ {tgt_eid}")
         return removed
@@ -237,6 +247,140 @@ class GraphEngine:
         logger.debug(f"[Graph] modify_attr: {entity_id}.{attr} {delta:+} → {new_val:.0f}")
         return True
 
+    def _adjust_delta_pairs(self, ops: list[EdgeOperation]) -> list[EdgeOperation]:
+        """
+        预校验 delta 操作对，防止 clip 破坏守恒。
+
+        当 A 付出 N 但库存不够时：
+          1. 将 A 的 delta 裁剪到实际可付的量
+          2. 将对应 B 的 delta 同比缩小，维持 Σ=0
+
+        LLM 输出语义：
+          delta: src=-N, tgt=item  → src 向系统付出 N 个 item
+          delta: src=B, tgt=item, delta=+M  → B 从系统接收 M 个 item
+        """
+        # 按 item (tgt) 分组所有 delta
+        item_groups: dict[str, list[dict]] = {}
+        for op in ops:
+            if op.get("op") != "delta":
+                continue
+            tgt_raw = op.get("tgt", "")
+            tgt_eid = self.resolve_eid(tgt_raw) or tgt_raw
+            item_groups.setdefault(tgt_eid, []).append(op)
+
+        adjusted = list(ops)
+        for item_eid, group in item_groups.items():
+            # 收集付出方（delta < 0）和接收方（delta > 0）
+            givers = [o for o in group if o.get("delta", 0) < 0]
+            receivers = [o for o in group if o.get("delta", 0) > 0]
+
+            for giver in givers:
+                src_raw = giver.get("src", "")
+                src_eid = self.resolve_eid(src_raw) or src_raw
+                need = abs(giver["delta"])
+                # 检查库存
+                edge = self.get_edge(src_eid, item_eid)
+                available = edge.quantity if edge else 0
+                if available >= need:
+                    continue  # 够付，不用调整
+
+                # 不够付！需要 clip
+                excess = need - available  # 差多少
+                giver["delta"] = -available  # 裁剪到实际可付
+                logger.warning(
+                    f"[Graph] conserve: {src_raw} 只有 {available} 个 {item_eid}，"
+                    f"delta={-need} 裁剪为 -{available}（差量 {excess}）"
+                )
+
+                # 从接收方扣除差量，维持守恒
+                remain = excess
+                for receiver in receivers:
+                    if remain <= 0:
+                        break
+                    recv_delta = receiver.get("delta", 0)
+                    if recv_delta <= 0:
+                        continue
+                    cut = min(remain, recv_delta)
+                    receiver["delta"] = recv_delta - cut
+                    remain -= cut
+                    logger.warning(
+                        f"[Graph] conserve: 同步裁剪 {receiver.get('src','?')} 的 "
+                        f"{item_eid} delta +{recv_delta} → +{receiver['delta']}"
+                    )
+
+        return adjusted
+
+    def _validate_op_entities(self, ops: list[EdgeOperation]) -> list[EdgeOperation]:
+        """
+        校验所有操作的 src/tgt 是否引用已知实体。
+        过滤掉引用未知实体的操作（默认阻止，config 开关控制）。
+
+        场景：LLM 幻觉出「买家」「脚夫」等不存在的实体名。
+        """
+        from ..config.config_loader import get_world_config
+        allow_unreg = get_world_config("allow_unregistered_entity", False)
+        if allow_unreg:
+            return ops  # 开关打开→不校验
+
+        valid = []
+        for op in ops:
+            op_type = op.get("op", "")
+            # recipe 的 src 必须已知
+            if op_type == "recipe":
+                src_raw = op.get("src", "")
+                src = self.resolve_eid(src_raw) or src_raw
+                if src not in self._entities:
+                    logger.warning(f"[Graph] 拒绝: recipe src={src_raw} 不在图中")
+                    continue
+                valid.append(op)
+                continue
+
+            # system_delta 的 tgt 必须已知
+            if op_type == "system_delta":
+                tgt_raw = op.get("tgt", "")
+                tgt = self.resolve_eid(tgt_raw) or tgt_raw
+                if tgt not in self._entities:
+                    logger.warning(f"[Graph] 拒绝: system_delta tgt={tgt_raw} 不在图中")
+                    continue
+                valid.append(op)
+                continue
+
+            # delta 的 src 必须已知（tgt 是物品，通常可自动注册）
+            if op_type == "delta":
+                src_raw = op.get("src", "")
+                src = self.resolve_eid(src_raw) or src_raw
+                if src not in self._entities:
+                    logger.warning(f"[Graph] 拒绝: delta src={src_raw} 不在图中")
+                    continue
+                valid.append(op)
+                continue
+
+            # attr / set_qty 等也检查 src/tgt
+            if op_type == "attr":
+                tgt_raw = op.get("target", "")
+                tgt = self.resolve_eid(tgt_raw) or tgt_raw
+                if tgt not in self._entities:
+                    logger.warning(f"[Graph] 拒绝: attr target={tgt_raw} 不在图中")
+                    continue
+                valid.append(op)
+                continue
+
+            if op_type == "set_qty":
+                src_raw = op.get("src", "")
+                tgt_raw = op.get("tgt", "")
+                src = self.resolve_eid(src_raw) or src_raw
+                tgt = self.resolve_eid(tgt_raw) or tgt_raw
+                if src not in self._entities or tgt not in self._entities:
+                    logger.warning(f"[Graph] 拒绝: set_qty src={src_raw} tgt={tgt_raw} 不在图中")
+                    continue
+                valid.append(op)
+                continue
+
+            # 其他 op 类型通过
+            valid.append(op)
+
+        return valid
+
     def apply_edge_operations(self, ops: list[EdgeOperation]) -> dict[str, Any]:
         """
         批量执行边操作。
@@ -254,6 +398,10 @@ class GraphEngine:
         """
         results = []
         status = "ok"
+
+        # Pre-pass: 调整 delta pair 防止 clip 破坏守恒
+        ops = self._validate_op_entities(ops)
+        ops = self._adjust_delta_pairs(ops)
 
         for op in ops:
             op_type = op.get("op", "")
@@ -510,13 +658,36 @@ class GraphEngine:
         if not eid_list:
             return "", {}
 
-        # 为每个 entity_id 分配抽象标签（大写字母）
+        # 为每个 entity_id 分配抽象标签
+        # 优先从 node_config.json 的 label_mappings 加载
+        from ..config.config_loader import get_all_label_mappings
+        config_labels = get_all_label_mappings()  # {name → label}
+
         label_to_eid: dict[str, str] = {}
         eid_to_label: dict[str, str] = {}
-        for i, eid in enumerate(eid_list):
-            label = chr(65 + i)  # A, B, C, ... (最多 26 个)
-            label_to_eid[label] = eid
-            eid_to_label[eid] = label
+        used_labels: set[str] = set()
+        for eid in eid_list:
+            ent = self._entities.get(eid)
+            name = ent.name if ent else ""
+            label = config_labels.get(name) if name else None
+            if label and label not in used_labels:
+                label_to_eid[label] = eid
+                eid_to_label[eid] = label
+                used_labels.add(label)
+
+        # 未配置映射的实体动态分配新标签
+        for eid in eid_list:
+            if eid in eid_to_label:
+                continue
+            i = 0
+            while True:
+                label = chr(65 + i)
+                if label not in used_labels:
+                    label_to_eid[label] = eid
+                    eid_to_label[eid] = label
+                    used_labels.add(label)
+                    break
+                i += 1
 
         lines = []
         # 连接描述
@@ -658,8 +829,67 @@ def _is_item_type(eid: str) -> bool:
     """判断实体 ID 是否为物品类型（守恒量候选）"""
     tid = prefix_to_type_id(eid)
     if not tid:
-        # fallback: 以 'item_' 前缀开头的视为物品
         return eid.startswith("item_")
     from ..config.config_loader import has_role
     return has_role(tid, "thing")
+
+
+def build_label_mapping_text(
+    label_map: dict[str, str],
+    graph_engine=None,
+    *,
+    include_tags: bool = False,
+    include_type: bool = False,
+) -> str:
+    """
+    从 label_map 渲染标准化的标签映射文本。
+
+    输出格式：{A} = 可读名称 → entity_id [type] (tag)
+    include_tags=True 时追加 conserved/terminal 标记
+    include_type=True 时追加 type 信息
+
+    所有 LLM prompt 的映射表由此一处生成，换映射格式只改这里。
+    标签按 node_config.json 中 label_mappings.labels[] 的顺序排序。
+    """
+    from ..config.config_loader import get_all_label_mappings
+    config_order = get_all_label_mappings()  # {name → label}
+
+    # 按 config 顺序排序，不在 config 中的按字母序
+    def sort_key(item):
+        label, eid = item
+        ent = graph_engine.get_entity(eid) if graph_engine else None
+        name = ent.name if ent else ""
+        order = list(config_order.keys()).index(name) if name in config_order else 999
+        return (order, label)
+
+    lines = []
+    for label, eid in sorted(label_map.items(), key=sort_key):
+        name = "?"
+        if graph_engine:
+            ent = graph_engine.get_entity(eid)
+            if ent:
+                name = ent.name
+        else:
+            name = _extract_name_from_eid(eid)
+
+        parts = [f"  {{{label}}} = {name}"]
+        parts.append(f"  → {eid}")
+
+        if include_type and graph_engine:
+            ent = graph_engine.get_entity(eid)
+            if ent and ent.entity_type:
+                parts.append(f"  [{ent.entity_type}]")
+
+        if include_tags and graph_engine:
+            tags = []
+            if graph_engine.is_conserved(eid):
+                tags.append("conserved")
+            if graph_engine.is_terminal(eid):
+                tags.append("terminal")
+            if tags:
+                parts.append(f"  ({', '.join(tags)})")
+
+        lines.append("".join(parts))
+
+    return "\n".join(lines)
 

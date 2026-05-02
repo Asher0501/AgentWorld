@@ -36,3 +36,15 @@ p2.sh
 .idea/
 .vscode/
 *~
+
+# Generated tick archives
+traces/
+
+# Temp test scripts
+_run_*.py
+
+# Backup files
+*.bak
+
+# Temp scripts
+_[a-z]*.py

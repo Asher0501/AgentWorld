@@ -455,7 +455,65 @@ DEFAULT_NPCS = [
     ("小虎子", NPCRole.WANDERER, make_messenger, 0),
 ]
 
-# 小型测试集：6 个 NPC（精简经济模型）
+def make_guard_buyer(name: str, seed: int = 0) -> NPC:
+    """守卫（买家型）— 有钱，需要买食物"""
+    physical = PhysicalAttributes(
+        energy_capacity=130.0,
+        health=100.0,
+        recovery_speed=1.2,
+        age=28 + seed * 5,
+    )
+    persona = PersonaTags(
+        work_ethic="忠诚",
+        social_class="平民",
+        reputation="好",
+        interests=["巡逻", "吃肉", "喝酒"],
+        personality=["外向", "直爽"],
+    )
+    return NPC(
+        attributes={"strength":10,"intelligence":10,"charisma":10,"endurance":10,"wisdom":10,"_recent_info":"刚轮值完有些饿，想去集市买点吃的。"},
+        name=name,
+        role=NPCRole.GUARD,
+        physical=physical,
+        persona_tags=persona,
+        position=Position(zone_id="barracks"),
+        vitality=90.0,
+        satiety=40.0,
+        mood=60.0,
+        inventory=["金币"] * 15,
+    )
+
+
+def make_traveler(name: str, seed: int = 0) -> NPC:
+    """流浪旅人 — 长途跋涉，需要补给"""
+    physical = PhysicalAttributes(
+        energy_capacity=100.0,
+        health=80.0,
+        recovery_speed=1.0,
+        age=22 + seed * 5,
+    )
+    persona = PersonaTags(
+        work_ethic="随性",
+        social_class="平民",
+        reputation="陌生",
+        interests=["风景", "美食", "见闻"],
+        personality=["好奇", "随和"],
+    )
+    return NPC(
+        attributes={"strength":10,"intelligence":10,"charisma":10,"endurance":10,"wisdom":10,"_recent_info":"走了大半天肚子很饿，想找个地方买些吃的补充体力。"},
+        name=name,
+        role=NPCRole.WANDERER,
+        physical=physical,
+        persona_tags=persona,
+        position=Position(zone_id="village_square"),
+        vitality=60.0,
+        satiety=20.0,
+        mood=40.0,
+        inventory=["金币"] * 10,
+    )
+
+
+# 小型测试集：8 个 NPC（精简经济模型）
 SMALL_NPCS = [
     # 农民 (2)
     ("老张", NPCRole.FARMER, make_farmer, 0),
@@ -466,6 +524,9 @@ SMALL_NPCS = [
     ("张大娘", NPCRole.MERCHANT, make_market_owner, 0),
     # 酒馆 (1)
     ("老陈", NPCRole.MERCHANT, make_tavern_owner, 0),
+    # 买家 (2) — 有钱，需要消费
+    ("赵铁柱", NPCRole.GUARD, make_guard_buyer, 0),
+    ("陈小梅", NPCRole.WANDERER, make_traveler, 0),
 ]
 
 

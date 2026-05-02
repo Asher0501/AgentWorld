@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..config.config_loader import has_role
+from .prompt_assembler import assemble
 
 logger = logging.getLogger("interaction_layer")
 
@@ -86,8 +87,9 @@ class InteractionLayer:
     输出：list[EdgeResult]（去重后的边级结果，description 为 LLM 生成的故事）
     """
 
-    def __init__(self, resolver=None):
+    def __init__(self, resolver=None, adapter=None):
         self._resolver = resolver
+        self._adapter = adapter  # VillageDomainAdapter
 
     def process(self, exec_results: list[dict], graph_engine=None,
                 world_time_str: str | None = None,
@@ -316,16 +318,36 @@ class InteractionLayer:
     def _build_story_prompt(self, component: Component, exec_results: list[dict],
                             graph_engine=None, world_time_str: str | None = None,
                             tick_duration_str: str | None = None) -> str:
-        """为一个连通子图构建故事 prompt。
-
-        子图的节点按原样列出——引擎不替 LLM 区分 NPC/zone/item。
-        每个节点通过自有属性（entity_type、role、desc、traits、attributes）自我描述。
-        """
+        """为一个连通子图构建故事 prompt。"""
         if not graph_engine:
             return self._legacy_build_prompt(component, exec_results,
                                              world_time_str, tick_duration_str)
 
-        # NPC 信息索引
+        # 使用 Slot 式组装
+        if self._adapter:
+            # 构建 entity_blocks：list of (entity, exec_result)
+            npc_map: dict[str, dict] = {er["npc_name"]: er for er in exec_results}
+            entity_blocks = []
+            for eid in component.entity_ids:
+                ent = graph_engine.get_entity(eid)
+                if not ent:
+                    continue
+                er = npc_map.get(ent.name, {})
+                entity_blocks.append((ent, er))
+
+            topo_eids = list(component.entity_ids)
+            return assemble(
+                "llm3_story", self._adapter, graph_engine,
+                _caller="llm3",
+                time_str=world_time_str,
+                tick_str=tick_duration_str,
+                entity_blocks=entity_blocks,
+                component=component,
+                exec_results=exec_results,
+                topo_eids=topo_eids,
+            )
+
+        # 旧版回退
         npc_map: dict[str, dict] = {er["npc_name"]: er for er in exec_results}
 
         parts = [
@@ -339,68 +361,40 @@ class InteractionLayer:
         if tick_duration_str:
             parts.append(f"本 tick 时长：{tick_duration_str}")
         parts.append("")
-
-        # ── 节点块：子图内所有实体（不区分类型） ──
-        parts.append("===== 场景中存在的角色和物体 =====")
+        parts.append("【角色和物体】")
         parts.append("")
-
-        # 先排 zone 类节点（环境描述优先）
         node_blocks = []
         for eid in component.entity_ids:
             ent = graph_engine.get_entity(eid)
             if not ent:
                 continue
-
             block_lines = [f"· {ent.name}"]
-
-            # 类型标识
             type_str = ent.entity_type if ent.entity_type else "?"
             block_lines.append(f"  类型: {type_str}")
-
-            # 描述（zone/object 有 desc）
             if ent.desc:
                 block_lines.append(f"  描述: {ent.desc}")
-
-            # 角色（NPC）
             if ent.role:
                 block_lines.append(f"  身份: {ent.role}")
-
-            # 数值属性（NPC）
             npc_name = ent.name
             er = npc_map.get(npc_name)
             if er:
-                mood_txt = er.get("mood_text", "")
-                sat_txt = er.get("satiety_text", "")
-                vit_txt = er.get("vitality_text", "")
-                if vit_txt:
-                    block_lines.append(f"  体力: {vit_txt}")
-                if sat_txt:
-                    block_lines.append(f"  饱腹: {sat_txt}")
-                if mood_txt:
-                    block_lines.append(f"  心情: {mood_txt}")
-
-                # 记忆（最近几条）
-                mems = er.get("memories", "")
+                for txt_key, label in [("vitality_text","体力"),("satiety_text","饱腹"),("mood_text","心情")]:
+                    val = er.get(txt_key,"")
+                    if val:
+                        block_lines.append(f"  {label}: {val}")
+                mems = er.get("memories","")
                 if mems:
-                    mem_lines = mems.strip().split("\n")[:3]
-                    block_lines.append(f"  最近经历: {'；'.join(mem_lines)}")
-
-                # 性格特质
-                traits = er.get("traits", [])
+                    ml = mems.strip().split("\n")[:3]
+                    block_lines.append(f"  最近经历: {'；'.join(ml)}")
+                traits = er.get("traits",[])
                 if traits:
                     block_lines.append(f"  性格: {'、'.join(str(t) for t in traits[:3])}")
-
-                # 想法
-                intent = er.get("raw_intent", "")
+                intent = er.get("raw_intent","")
                 if intent:
                     block_lines.append(f"  想法: {intent}")
-
-            # 物品数量（item 节点持有持有者视角）
             node_blocks.append("\n".join(block_lines))
-
         parts.append("\n\n".join(node_blocks) if node_blocks else "(无节点信息)")
-
-        # ── 库存描述 ──
+        parts.append("")
         if component.npc_names:
             inventory_lines = []
             for npc_name in sorted(component.npc_names):
@@ -411,35 +405,39 @@ class InteractionLayer:
                         items = [f"{i['item_name']}x{i['quantity']}" for i in inv]
                         inventory_lines.append(f"{npc_name}带着: {'、'.join(items)}")
             if inventory_lines:
-                parts.append("")
                 parts.append("【库存】")
                 for line in inventory_lines:
                     parts.append(f"  · {line}")
-
-        # ── 边描述 ──
+        topo_eids = list(component.entity_ids)
+        topo_text, label_map = graph_engine.build_tagged_topology(topo_eids)
+        if topo_text:
+            parts.append("")
+            parts.append("拓扑信息是客观数据层的唯一事实来源。")
+            parts.append(topo_text)
+            parts.append("")
+            from .graph_engine import build_label_mapping_text
+            parts.append(build_label_mapping_text(label_map, graph_engine))
+            parts.append("")
+            parts.append("拓扑约束：故事内容不得超出上述边的定义范围。")
+            parts.append("例如，若 {A} 无 → {Y} 边，则 {A} 对应的角色在故事中不能与 {Y} 发生交互。")
         if component.edges:
             parts.append("")
-            parts.append("【本 tick 发生的交互】")
             for e in component.edges:
                 if e.edge_type == "npc_zone" and e.stayed:
-                    parts.append(f"  · {e.source} 在原地驻足")
+                    parts.append(f"· {e.source} 在原地驻足")
                 elif e.edge_type == "npc_zone":
-                    parts.append(f"  · {e.source} 来到此处")
+                    parts.append(f"· {e.source} 来到此处")
                 elif e.edge_type == "npc_npc" and not e.success:
-                    parts.append(f"  · {e.source} 试图找 {e.target}，但没成功")
+                    parts.append(f"· {e.source} 试图找 {e.target}，但没成功")
                 elif e.edge_type == "npc_npc":
-                    parts.append(f"  · {e.source} 与 {e.target} 有互动")
+                    parts.append(f"· {e.source} 与 {e.target} 有互动")
                 elif e.edge_type == "npc_object":
-                    parts.append(f"  · {e.source} 使用 {e.target}")
-            parts.append("")
-
-        # ── 输出指令 ──
-        parts.append("===== 输出 =====")
+                    parts.append(f"· {e.source} 使用 {e.target}")
+        else:
+            parts.append("（无交互事件）")
+        parts.append("")
         parts.append("请为以上场景写一段生动的故事。一段即可。")
-        parts.append("用【场景】开头，后面不要加标题名称。")
-        parts.append("示例：")
-        parts.append("【场景】清晨的阳光洒在市集的石板路上...")
-
+        parts.append("用【场景】开头。")
         return "\n".join(parts)
 
     def _legacy_build_prompt(self, component: Component, exec_results: list[dict],

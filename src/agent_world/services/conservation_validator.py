@@ -31,6 +31,7 @@ class ValidationOutcome:
     result: ValidationResult
     message: str = ""
     details: list[str] = field(default_factory=list)
+    passed_groups: set[str | None] | None = None
 
     @property
     def passed(self) -> bool:
@@ -59,96 +60,92 @@ class ConservationValidator:
         """
         校验一组 delta 操作。
 
+        每组独立校验守恒，一组失败不影响其他组。
+        group 字段由 LLM 在拓扑操作中标注，业务含义如"一笔交易"。
+        无 group 的操作归入全局组（group=None）。
+
         Args:
             ops: [{op: "delta"|"system_delta"|"recipe"|"attr", ...}, ...]
             epsilon: 浮点误差容限
 
         op 类型校验规则:
-          - delta: Σ=0（同前）
+          - delta: 按 (item, group) 分组 Σ=0
           - system_delta: 跳过守恒检查（系统间转移）
           - recipe: 跳过守恒检查（配方转换内部自平衡）
           - attr: 跳过（非守恒量）
 
         Returns:
-            ValidationOutcome
+            ValidationOutcome:
+              - result: "pass" | "soft_warn" | "hard_fail"
+              - message: 摘要
+              - details: 逐项结果
+              - passed_groups: 通过校验的 group 集合（调用方据此过滤 ops）
         """
+        self._passed_groups: set[str | None] = set()
+
         if not ops:
             return ValidationOutcome(ValidationResult.PASS, "无操作，自动通过")
 
-        # system_delta 和 recipe 跳过守恒检查
         bypassed = [op for op in ops if op.get("op") in ("system_delta", "recipe")]
         for b in bypassed:
             logger.debug(f"[度守恒] 跳过 {b.get('op')}: {b}")
 
-        # 只提取 delta 类型的操作进行守恒校验
         deltas = [op for op in ops if op.get("op") == "delta"]
         if not deltas:
             msg = "无 delta 操作"
             if bypassed:
                 msg += f"，{len(bypassed)} 条已跳过守恒检查"
-            return ValidationOutcome(ValidationResult.PASS, msg)
+            return ValidationOutcome(ValidationResult.PASS, msg, passed_groups=set())
 
-        details: list[str] = []
-
-        # 1. 按 target (item_eid) 分组 Σ(delta) — 只检查守恒量
-        item_sums: dict[str, int] = {}
+        # 按 (item, group) 分组求和
+        group_sums: dict[tuple[str, str | None], int] = {}
         for d in deltas:
             tgt = d.get("tgt", "")
             delta = d.get("delta", 0)
+            group = d.get("group", None)
             if not tgt:
                 continue
-            # 非守恒量跳过检查
             if self._graph and not self._graph.is_conserved(tgt):
-                details.append(f"  {tgt}: 非守恒量，跳过")
                 continue
-            if not self._graph:
-                # 无图引擎时默认所有 tgt 都是守恒量
-                pass
-            item_sums[tgt] = item_sums.get(tgt, 0) + delta
+            key = (tgt, group)
+            group_sums[key] = group_sums.get(key, 0) + delta
 
-        imbalances = {
-            item: delta for item, delta in item_sums.items()
-            if abs(delta) > epsilon
-        }
+        details: list[str] = []
+        hard_fail = False
 
-        if imbalances:
-            hard_fail = False
-            for item, delta in imbalances.items():
-                item_name = item.removeprefix("item_")
-                if delta > 0:
-                    # 正不平衡 = 凭空创造 → 永远是硬错误
-                    details.append(f"  {item}: Σ = {delta:+d} ❌ 正不平衡（凭空创造）！")
+        # 按 group 汇总每个物品的 Σ
+        group_items: dict[str | None, dict[str, int]] = {}
+        for (tgt, group), total in group_sums.items():
+            if group not in group_items:
+                group_items[group] = {}
+            group_items[group][tgt] = total
+
+        for group, gitems in group_items.items():
+            group_tag = f"[group={group}]" if group is not None else "[全局]"
+            group_ok = True
+            for tgt, total in gitems.items():
+                if abs(total) <= epsilon:
+                    details.append(f"  {tgt}: Σ = 0 ✅ {group_tag} 度守恒")
+                elif total > 0:
+                    details.append(f"  {tgt}: Σ = {total:+d} ❌ {group_tag} 正不平衡（凭空创造）！")
                     hard_fail = True
+                    group_ok = False
                 else:
-                    # 负不平衡 = 消耗 → 仅警告，允许（消费/使用是合理行为）
-                    details.append(f"  {item}: Σ = {delta:+d} ⚠️ 负不平衡（消耗/使用）")
+                    details.append(f"  {tgt}: Σ = {total:+d} ⚠️ {group_tag} 负不平衡（消耗/使用）")
                     details.append(f"    → 允许（物品消耗是合理行为）")
+            if group_ok:
+                self._passed_groups.add(group)
 
-            if hard_fail:
-                fail_items = [f"{i}=Σ{delta:+d}" for i, delta in imbalances.items() if delta > 0]
-                fail_msg = "度守恒校验失败: " + "; ".join(fail_items)
-                return ValidationOutcome(ValidationResult.HARD_FAIL, fail_msg, details)
-            else:
-                # 只有负不平衡（消耗）→ 仅警告，不过滤操作
-                warn_items = [f"{i}=Σ{delta:+d}" for i, delta in imbalances.items() if delta < 0]
-                return ValidationOutcome(ValidationResult.SOFT_WARN, "度守恒警告（物品消耗）: " + "; ".join(warn_items), details)
-
-        for item, delta in item_sums.items():
-            if abs(delta) <= epsilon:
-                details.append(f"  {item}: Σ = 0 ✅ 度守恒")
-
-        # 2. 检查每个 NPC 的最终持有量 ≥ 0（如果有图引擎的话）
+        # 负平衡检查（全局，不分组）：任何人持有量 ≥ 0
         if self._graph:
             for d in deltas:
                 src = d.get("src", "")
                 tgt = d.get("tgt", "")
-                delta = d.get("delta", 0)
                 if not src or not tgt:
                     continue
                 ent = self._graph.get_entity(src)
                 if not ent or not has_role(ent.type_id, "actor"):
                     continue
-                # 只检查守恒量的透支
                 if not self._graph.is_conserved(tgt):
                     continue
                 current = self._graph.get_held_quantity(src, tgt)
@@ -158,9 +155,40 @@ class ConservationValidator:
                         ValidationResult.HARD_FAIL,
                         f"{src} 持有守恒量 {tgt} 为负 ({current})",
                         details,
+                        passed_groups=set(),
                     )
 
         details_str = "\n".join(details)
         if details:
             logger.debug(f"[度守恒]\n{details_str}")
-        return ValidationOutcome(ValidationResult.PASS, "度守恒校验通过 ✅", details)
+
+        if hard_fail:
+            fail_items = []
+            for group, gitems in group_items.items():
+                for tgt, total in gitems.items():
+                    if total > 0:
+                        gtag = f"[group={group}]" if group is not None else "[全局]"
+                        fail_items.append(f"{tgt}={total:+d}{gtag}")
+            return ValidationOutcome(
+                ValidationResult.HARD_FAIL,
+                "部分分组度守恒校验失败: " + "; ".join(fail_items),
+                details,
+                passed_groups=self._passed_groups,
+            )
+
+        if any(val < 0 for gitems in group_items.values() for val in gitems.values()):
+            warn_items = []
+            for group, gitems in group_items.items():
+                for tgt, total in gitems.items():
+                    if total < 0:
+                        gtag = f"[group={group}]" if group is not None else "[全局]"
+                        warn_items.append(f"{tgt}={total:+d}{gtag}")
+            return ValidationOutcome(
+                ValidationResult.SOFT_WARN,
+                "度守恒警告（物品消耗）: " + "; ".join(warn_items),
+                details,
+                passed_groups=self._passed_groups,
+            )
+
+        return ValidationOutcome(ValidationResult.PASS, "度守恒校验通过 ✅", details,
+                                  passed_groups=self._passed_groups)

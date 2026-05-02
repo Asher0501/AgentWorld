@@ -34,6 +34,8 @@ from .interaction_resolver import InteractionResolver
 from .intent_executor import IntentResolver
 from .post_processor import PostProcessor
 from .interaction_layer import InteractionLayer
+from .village_adapter import VillageDomainAdapter
+from .prompt_assembler import assemble
 
 
 # ─── 数值→文字辅助（供 LLM #3 叙事使用） ───
@@ -108,6 +110,7 @@ class GraphNPCEngine:
         self._current_world_time_str = ""
         self._current_time_of_day = ""
         self._tick_duration_str = ""
+        self._adapter = VillageDomainAdapter()
 
     def add_listener(self, listener: Callable):
         self._listeners.append(listener)
@@ -273,9 +276,13 @@ class GraphNPCEngine:
         logger.info(f"[LLM #1] {len(npc_plans)} 个 NPC 的计划已生成")
 
         # ─── Step 2: LLM #2 — 计划 + 拓扑 → 拓扑结构变更 ───
+        # 注入 graph_engine 到 adapter
+        self._adapter.set_graph_engine(self.graph_engine)
+
         intent_resolver = IntentResolver(
             graph_engine=self.graph_engine,
             resolver=self._resolver,
+            adapter=self._adapter,
         )
         topology_ops = intent_resolver.resolve_all_intents(npc_plans)
         logger.info(f"[LLM #2] {len(topology_ops)} 个拓扑结构操作")
@@ -284,7 +291,7 @@ class GraphNPCEngine:
         exec_results = self._execute_intents(topology_ops, npcs, npc_info, npc_plans)
 
         # ─── Step 4: LLM #3 (InteractionLayer) — 故事生成 ───
-        il = InteractionLayer(resolver=self._resolver)
+        il = InteractionLayer(resolver=self._resolver, adapter=self._adapter)
         all_er_dicts = [er for er in exec_results]
         edge_results = il.process(
             all_er_dicts,
@@ -297,7 +304,7 @@ class GraphNPCEngine:
         logger.info(f"[LLM #3] {len(edge_results)} 条边故事 → {len(stories)} 个唯一故事")
 
         # ─── Step 5a: LLM #4a — 拓扑层操作 (delta / system_delta / recipe) ───
-        pp = PostProcessor(resolver=self._resolver)
+        pp = PostProcessor(resolver=self._resolver, adapter=self._adapter)
         topo_ops = pp.resolve_topology_changes(
             npc_plans=npc_plans,
             stories=stories,
@@ -316,11 +323,28 @@ class GraphNPCEngine:
             cv = ConservationValidator(self.graph_engine)
             outcome = cv.validate_deltas(topo_ops)
             if outcome.result.value in ("hard_fail",):
-                logger.error(f"[度守恒] HARD_FAIL — 拒绝写入: {outcome.message}")
+                logger.error(f"[度守恒] HARD_FAIL: {outcome.message}")
                 for det in outcome.details:
                     logger.error(f"[度守恒]   {det}")
-                topo_ops = []
-                logger.warning(f"[度守恒] 已丢弃全部拓扑操作")
+                # 分组过滤：仅移除未通过组的 delta 操作
+                # system_delta / recipe 跳过守恒检查，不受影响
+                passed = outcome.passed_groups or set()
+                before = len(topo_ops)
+                filtered = []
+                for op in topo_ops:
+                    if op.get("op") in ("system_delta", "recipe"):
+                        filtered.append(op)
+                    elif op.get("op") == "delta":
+                        g = op.get("group", None)
+                        if g in passed or ("group" not in op and None in passed):
+                            filtered.append(op)
+                        # else: discard
+                    else:
+                        filtered.append(op)
+                topo_ops = filtered
+                removed = before - len(topo_ops)
+                if removed:
+                    logger.warning(f"[度守恒] 已移除 {removed}/{before} 操作（未通过分组）")
             elif outcome.result.value in ("soft_warn",):
                 logger.warning(f"[度守恒] SOFT_WARN: {outcome.message}")
                 for det in outcome.details:

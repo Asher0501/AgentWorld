@@ -27,6 +27,7 @@ _ENTITIES: dict[str, list[dict]] = {}              # "zones" / "items" / "object
 _ENTITY_INDEX: dict[str, dict[str, dict]] = {}     # type → {id → entity}
 _ZONE_CONNECTIONS: dict[str, list[str]] = {}       # zone_id → [connected zone_ids]
 _WORLD_CONFIG: dict[str, Any] = {}                 # world 顶级配置
+_LABEL_MAP: dict[str, str] = {}                    # 实体名称 → 拓扑标签
 
 
 def _load() -> None:
@@ -51,6 +52,14 @@ def _load() -> None:
         _TYPE_PREFIX_TO_ID[prefix] = tid
 
     # ── 2. 区域连接 ──
+    # ── 1.5. 标签映射 ──
+    _LABEL_MAP.clear()
+    for entry in config.get("label_mappings", {}).get("labels", []):
+        name = entry.get("name", "")
+        label = entry.get("label", "")
+        if name and label:
+            _LABEL_MAP[name] = label
+
     _ZONE_CONNECTIONS.clear()
     for conn in _WORLD_CONFIG.get("zone_connections", []):
         from_zone = conn["from"]
@@ -131,6 +140,20 @@ def has_recent_info(type_id: int) -> bool:
     _load()
     switches = _TYPE_DEFS.get(type_id, {}).get("switches", {})
     return bool(switches.get("has_recent_info", False))
+
+
+# ─── 标签映射查询 ───
+
+def get_all_label_mappings() -> dict[str, str]:
+    """获取完整标签映射：实体名称 → 拓扑标签（如 {'王老板': 'A', '蔬菜': 'C', ...}）"""
+    _load()
+    return dict(_LABEL_MAP)
+
+
+def get_label_for_name(name: str) -> str | None:
+    """按实体名称查拓扑标签，未配置则返回 None"""
+    _load()
+    return _LABEL_MAP.get(name)
 
 
 # ─── 角色标签查询 ───
@@ -214,6 +237,12 @@ def get_world_default_time() -> dict:
     """获取世界默认时间"""
     _load()
     return _WORLD_CONFIG.get("default_time", {"hour": 8, "minute": 0, "day": 1, "month": 1, "year": 1})
+
+
+def get_world_config(key: str, default=None):
+    """获取 world 顶级配置中的任意键值"""
+    _load()
+    return _WORLD_CONFIG.get(key, default)
 
 
 # ─── Zone 对象构建 ───

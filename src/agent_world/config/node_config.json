@@ -10,6 +10,7 @@
       "month": 1,
       "year": 1
     },
+    "allow_unregistered_entity": false,
     "zone_connections": [
       {"from": "village_square", "to": ["market", "tavern", "library", "barracks", "temple", "farm", "forest"]},
       {"from": "market",        "to": ["village_square", "farm"]},
@@ -228,6 +229,31 @@
     ],
 
     "npcs": [
+    ]
+  },
+
+  "label_mappings": {
+    "comment": "实体名称 → 拓扑标签（稳定映射，不改标签名则全量依赖不变）",
+    "labels": [
+      {"name": "王老板",   "label": "A"},
+      {"name": "南集市",   "label": "B"},
+      {"name": "蔬菜",     "label": "C"},
+      {"name": "张大娘",   "label": "D"},
+      {"name": "铁匠王",   "label": "E"},
+      {"name": "铁锭",     "label": "F"},
+      {"name": "小麦",     "label": "G"},
+      {"name": "老张",     "label": "H"},
+      {"name": "田嫂",     "label": "I"},
+      {"name": "金币",     "label": "J"},
+      {"name": "面包",     "label": "K"},
+      {"name": "酒",       "label": "L"},
+      {"name": "货物",     "label": "M"},
+      {"name": "老陈",     "label": "N"},
+      {"name": "武器",     "label": "O"},
+      {"name": "农具",     "label": "P"},
+      {"name": "铁匠铺",   "label": "Q"},
+      {"name": "赵铁柱",   "label": "R"},
+      {"name": "陈小梅",   "label": "S"}
     ]
   }
 }

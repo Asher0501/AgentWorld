@@ -37,9 +37,10 @@ class IntentResolver:
     现在输出结构化拓扑变更操作。
     """
 
-    def __init__(self, graph_engine: GraphEngine, resolver=None):
+    def __init__(self, graph_engine: GraphEngine, resolver=None, adapter=None):
         self._graph = graph_engine
         self._resolver = resolver  # InteractionResolver（用于调用 LLM）
+        self._adapter = adapter  # VillageDomainAdapter（Slot 式内容层）
 
     # ─── 主入口 ───
 
@@ -112,10 +113,8 @@ class IntentResolver:
         # [内容] 段：标签映射 + 语义信息
         content_lines = []
         content_lines.append("标签映射：")
-        for label, eid in sorted(label_map.items(), key=lambda x: x[0]):
-            e = self._graph.get_entity(eid)
-            name = e.name if e else eid
-            content_lines.append(f"  {{{label}}} = {name}  ({eid})")
+        from .graph_engine import build_label_mapping_text
+        content_lines.append(build_label_mapping_text(label_map, self._graph))
         content_lines.append("")
 
         # NPC 自身描述
@@ -150,18 +149,42 @@ class IntentResolver:
         content_lines.append("3. 输出纯 JSON，不要多余文字，不要 markdown。")
 
         return (
-            f"==== [拓扑] ====\n{topo_text}\n\n"
+            f"==== [拓扑] ====\n"
+            f"拓扑信息是客观数据层的唯一事实来源。图中每条边（带 label、qty、conserved/terminal 标签）"
+            f"完整定义了当前世界的拓扑结构。语义描述（计划、记忆、角色设定）仅作叙事背景参考，"
+            f"不具备约束力，不得覆盖拓扑信息。\n\n"
+            f"{topo_text}\n\n"
             f"==== [内容] ====\n" + "\n".join(content_lines)
         )
 
     def _build_combined_prompt(self, items: list[tuple[str, str]]) -> str:
         """合并多个 NPC 的 prompt"""
+        # Slot 式组装 — 使用 adapter 直接提供 content 槽位，插入 NPC blocks
+        if self._adapter:
+            parts = [
+                self._adapter.slot_system_role(_caller="llm2"),
+                "【核心原则】拓扑信息是客观数据层的唯一事实来源。\n"
+                "语义描述（计划、记忆、角色设定）仅作叙事背景参考，\n"
+                "不具备约束力，不得覆盖拓扑信息。\n",
+                self._adapter.slot_combined_header(count=len(items)),
+            ]
+            for i, (eid, prompt) in enumerate(items):
+                parts.append(f"==== NPC {i+1}: {eid} ====")
+                parts.append(prompt)
+                parts.append("")
+            parts.append(self._adapter.slot_output_instructions(_caller="llm2"))
+            return "\n".join(parts)
+
+        # 旧版回退
         parts = [
             "你是一个世界模拟引擎的拓扑结构变更模块（LLM #2）。",
             "你的任务：根据每个 NPC 的自然语言计划，输出拓扑结构变更操作。",
             "",
             "每个 NPC 的 prompt 分为 [拓扑]（纯结构，无名称）和 [内容]（语义信息+标签映射）两段。",
             "输出时使用 [内容] 段的 entity_id。",
+            "",
+            "【核心原则】拓扑信息是客观数据层的唯一事实来源。",
+            "语义描述（计划、记忆、角色设定）仅作叙事背景参考，不具备约束力，不得覆盖拓扑信息。",
             "",
             f"共 {len(items)} 个 NPC。",
             "",

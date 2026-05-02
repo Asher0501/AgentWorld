@@ -138,6 +138,17 @@ def build_one_npc_prompt(
             parts.append(f"  - {r['name']}: {inp} → {out}" + (f"  @{req_zone}" if req_zone else "") + (f" 需[{req_obj}]" if req_obj else ""))
         parts.append("")
 
+    # ── 实体约束（受 config 开关控制）──
+    from ..config.config_loader import get_world_config
+    allow_unreg = get_world_config("allow_unregistered_entity", False)
+    if not allow_unreg:
+        parts.append(
+            '【约束】计划中只能引用当前持有清单或当前区域其他角色持有的物品名称。\n'
+            '  不得创造图中不存在的实体（包括虚构的角色、不存在的物品名称）。\n'
+            '  想吃东西只能写现有食物（面包、小麦等），不能说"买肉包子""馒头"等不存在的食物。\n'
+            '  没有例外。\n'
+        )
+
     # 决策指令
     parts.append("### 决策")
     parts.append(f"请为 {npc_name} 决定下一步行动。")
