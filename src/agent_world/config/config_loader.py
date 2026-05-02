@@ -77,6 +77,9 @@ def _load() -> None:
     _ENTITY_INDEX.clear()
     for category, items in entities.items():
         _ENTITIES[category] = items
+        if not isinstance(items, list):
+            # npc_sets 是 dict {small:[], default:[]}，跳过索引
+            continue
         idx_map: dict[str, dict] = {}
         for item in items:
             eid = item.get("id", "")
@@ -271,6 +274,37 @@ def build_zone_model_full(zone_id: str) -> dict | None:
         "capacity": z.get("capacity", 20),
         "connected_zones": _ZONE_CONNECTIONS.get(zone_id, []),
     }
+
+
+# ─── NPC 配置读取（从 JSON 返回原始 dict，不依赖 NPC 模型）───
+
+def get_npc_defs(small: bool = False) -> list[dict]:
+    """从 node_config.json 返回 NPC 定义列表（原始 dict，非 NPC 对象）"""
+    _load()
+    key = "small" if small else "default"
+    names = _ENTITIES.get("npc_sets", {}).get(key, [])
+    all_npcs = {n["name"]: n for n in _ENTITIES.get("npcs", [])}
+    result = []
+    for n in names:
+        d = all_npcs.get(n)
+        if d:
+            result.append(d)
+        else:
+            print(f"[Config] WARNING: NPC '{n}' 在 config 中未定义")
+    return result
+
+
+def get_all_npc_defs() -> list[dict]:
+    """返回全部 NPC 定义"""
+    _load()
+    return _ENTITIES.get("npcs", [])
+
+
+def get_npc_def(name: str) -> dict | None:
+    """按名称查询 NPC 定义"""
+    _load()
+    all_npcs = {n["name"]: n for n in _ENTITIES.get("npcs", [])}
+    return all_npcs.get(name)
 
 
 # ─── 提示词辅助（显示类型名，仅用于 LLM 提示——引擎自身不用）───
