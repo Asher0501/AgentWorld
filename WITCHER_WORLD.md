@@ -1,5 +1,9 @@
 # 猎魔人世界：「白果园」
 
+<p align="center">
+  <img src="witcher_banner.png" alt="白果园 — 猎魔人世界" width="100%">
+</p>
+
 > AgentWorld 的默认域（domain）——基于《猎魔人》系列改编的世界设定。
 > 所有数据由 `config/domain.json` 驱动，引擎代码与背景无关。
 
