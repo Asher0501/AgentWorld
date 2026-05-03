@@ -319,42 +319,9 @@ class GraphNPCEngine:
         # 保存供后续使用
         self._last_delta_ops = topo_ops
 
-        # ═══ 度守恒校验（Step 5.5）═══════════════════════════════
-        if topo_ops:
-            from .conservation_validator import ConservationValidator
-            cv = ConservationValidator(self.graph_engine)
-            outcome = cv.validate_deltas(topo_ops)
-            if outcome.result.value in ("hard_fail",):
-                logger.error(f"[度守恒] HARD_FAIL: {outcome.message}")
-                for det in outcome.details:
-                    logger.error(f"[度守恒]   {det}")
-                # 分组过滤：仅移除未通过组的 delta 操作
-                # system_delta / recipe 跳过守恒检查，不受影响
-                passed = outcome.passed_groups or set()
-                before = len(topo_ops)
-                filtered = []
-                for op in topo_ops:
-                    if op.get("op") in ("system_delta", "recipe"):
-                        filtered.append(op)
-                    elif op.get("op") == "delta":
-                        g = op.get("group", None)
-                        if g in passed or ("group" not in op and None in passed):
-                            filtered.append(op)
-                        # else: discard
-                    else:
-                        filtered.append(op)
-                topo_ops = filtered
-                removed = before - len(topo_ops)
-                if removed:
-                    logger.warning(f"[度守恒] 已移除 {removed}/{before} 操作（未通过分组）")
-            elif outcome.result.value in ("soft_warn",):
-                logger.warning(f"[度守恒] SOFT_WARN: {outcome.message}")
-                for det in outcome.details:
-                    logger.warning(f"[度守恒]   {det}")
-            else:
-                logger.info(f"[度守恒] {outcome.message}")
-                for det in outcome.details:
-                    logger.info(f"[度守恒]   {det}")
+        # ═══ 度守恒校验已移至 LLM #5 预写检验层（code=5）═══════
+        # 此处不再有独立过滤步骤。
+        # 若 LLM #5 重试全部耗尽，在下面追加降级过滤。
 
         # ─── Step 5b: LLM #4b — 内容层操作 (attr + recent_info) ───
         # 在 #4a 执行之前运行，以便 LLM #5 能同时校验两者
@@ -407,6 +374,30 @@ class GraphNPCEngine:
                 feedback=feedback,
             )
             # 继续循环 → 重新校验
+
+        # ═══ 降级过滤：LLM #5 重试耗尽后，度守恒仍失败 → 静默移除坏操作 ═══
+        if topo_ops:
+            from .conservation_validator import ConservationValidator
+            cv = ConservationValidator(self.graph_engine)
+            fallback_outcome = cv.validate_deltas(topo_ops)
+            if fallback_outcome.result.value in ("hard_fail",):
+                logger.warning(f"[降级] 度守恒仍失败: {fallback_outcome.message}")
+                passed = fallback_outcome.passed_groups or set()
+                before = len(topo_ops)
+                filtered = []
+                for op in topo_ops:
+                    if op.get("op") in ("system_delta", "recipe"):
+                        filtered.append(op)
+                    elif op.get("op") == "delta":
+                        g = op.get("group", None)
+                        if g in passed or ("group" not in op and None in passed):
+                            filtered.append(op)
+                    else:
+                        filtered.append(op)
+                removed = before - len(filtered)
+                if removed:
+                    logger.warning(f"[降级] 已移除 {removed}/{before} 操作（度守恒）")
+                topo_ops = filtered
 
         logger.info(f"[LLM #5] 最终: {len(topo_ops)} topo, {len(attr_ops)} attr, {len(recent_info_map)} ri")
 

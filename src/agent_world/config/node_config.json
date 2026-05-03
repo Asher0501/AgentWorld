@@ -16,6 +16,12 @@
         "enabled": true,
         "description": "校验 delta 输出量不超过边当前 qty"
       },
+      "degree_conservation": {
+        "type": "dead_code",
+        "code": 5,
+        "enabled": true,
+        "description": "校验每个 group 内每种 item 的 delta 之和为 0"
+      },
       "direction_pairing": {
         "type": "llm_batch",
         "code": 3,

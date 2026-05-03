@@ -340,9 +340,20 @@ def _call_translate_llm(prompt: str) -> str:
                 },
                 json={
                     "model": "MiniMax-M2.7",
-                    "max_tokens": 4000,
-                    "temperature": 0.8,
-                    "system": "你只输出自然语言描述，不要推理过程，不要多余文字。只输出中文。",
+                    "max_tokens": 2000,
+                    "temperature": 0.1,
+                    "system": (
+                        "你是拓扑翻译器。"
+                        "规则（严格遵守，不允许任何例外）：\n"
+                        "1. 输出必须是纯自然语言中文，每行一句话。\n"
+                        "2. 禁止输出英文（人名、地名除外），发现即判失败。\n"
+                        "3. 禁止任何推理、分析、思考、解释（包括'我们需要''首先''这个'等元语言）。\n"
+                        "4. 只输出描述本身，没有前言后语。\n"
+                        "5. 直接输出，不要反问、不要总结、不要感叹。\n"
+                        "例：\n"
+                        "杰洛特在白果园，持有武器1件、金币8枚。\n"
+                        "丹德里恩在狐狸与鹅酒馆，持有金币20枚。"
+                    ),
                     "messages": [{"role": "user", "content": prompt}],
                 },
             )
@@ -357,6 +368,33 @@ def _call_translate_llm(prompt: str) -> str:
         return result.strip()
     except Exception:
         return ""
+
+
+def _is_valid_translation(text: str) -> bool:
+    """校验 LLM 翻译输出是否为合法中文描述（非分析模式）。"""
+    if not text or len(text) < 10:
+        return False
+    # 检测英文推理 — 以英文大写字母开头的非标签行
+    english_sig = 0
+    for line in text.split("\n"):
+        s = line.strip()
+        if not s:
+            continue
+        if s[0].isascii() and s[0].isalpha() and s[0].isupper():
+            non_cjk = sum(1 for c in s if c.isascii())
+            if non_cjk > len(s) * 0.6:
+                english_sig += 1
+    if english_sig > 2:
+        return False
+    # 检测中文推理关键词
+    forbidden = ["我们需要", "我们首先", "该拓扑", "Let's", "we need",
+                 "we should", "First,", "The user", "We have", "Now we"]
+    for w in forbidden:
+        if w in text:
+            return False
+    # 必须有中文字符
+    cjk = sum(1 for c in text if ord(c) > 0x4E00 and ord(c) < 0x9FFF)
+    return cjk > 0
 
 
 # ─── 校验层 ──────────────────────────────────────
@@ -529,10 +567,25 @@ def _translate_topology(raw_text: str, label_map: dict | None = None,
             feedback = _build_translation_feedback(failures)
             prompt = base_prompt + f"\n\n--- 需要修正 ---\n{feedback}"
 
-    # 最后一次尝试即使有错也返回
-    if result:
+    # 最后一次尝试：校验非分析模式才缓存，否则回退到原始格式
+    if result and _is_valid_translation(result):
         _topo_translate_cache[h] = result
-    return result
+        return result
+    # 翻译失败（分析模式）→ 回退到原始拓扑格式
+    return _build_fallback_topo(display_text)
+
+
+def _build_fallback_topo(display_text: str) -> str:
+    """翻译失败时的落策略：返回中文名替换后的原始拓扑格式。"""
+    lines = [line.rstrip() for line in display_text.split("\n") if line.strip()]
+    # 去重（保留顺序）
+    seen = set()
+    unique = []
+    for l in lines:
+        if l not in seen:
+            seen.add(l)
+            unique.append(l)
+    return "\n".join(unique)
 
 
 def _render_runtime_slot(slot_name: str, **kw) -> str:

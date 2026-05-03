@@ -7,12 +7,13 @@ VerificationLayer (预写校验层) — 纯校验器。
 由上层（graph_npc_engine.py）决定是否重跑 LLM #4。
 
 校验项由 verification_registry 统一注册：
-  [0] entity_existence     — 通用实体存在性（域无关）
-  [1] quantity_accuracy    — (翻译专用，域无关)
-  [2] capacity_upper_bound — delta 输出量不超过边 qty
-  [3] entity_coverage      — (翻译专用，域无关)
-  [4] direction_pairing    — (预留 LLM)
-  [5] story_consistency    — (预留 LLM)
+  [0] entity_existence        — 通用实体存在性（域无关）
+  [1] quantity_accuracy       — (翻译专用，域无关)
+  [2] capacity_upper_bound    — delta 输出量不超过边 qty
+  [3] entity_coverage         — (翻译专用，域无关)
+  [4] direction_pairing       — (预留 LLM)
+  [5] story_consistency       — (预留 LLM)
+  [6] degree_conservation     — 分组度守恒 Σ(delta)=0
 """
 from __future__ import annotations
 
@@ -115,18 +116,30 @@ class VerificationLayer:
         """
         将校验失败列表构建为反馈文本，供 LLM #4 重试时参考。
 
-        设计原则：简洁 + 只修不分析。
+        设计原则：每个错误码附带拓扑描述 + 具体原因，LLM 通过查错误码表理解问题。
         """
-        from collections import Counter
-        code_counts = Counter(f.code for f in failures)
-        summary_parts = [f"    · 错误码 {code}: {count} 项"
-                         for code, count in sorted(code_counts.items())]
+        from .verification_registry import get_error_description
 
         lines = [
             "===== 上一轮校验未通过 (共 {} 项) =====".format(len(failures)),
             "",
-            *summary_parts,
-            "",
+        ]
+
+        # 按错误码分组，每组输出描述 + 所有具体失败
+        from collections import defaultdict
+        by_code: dict[int, list[CheckFailure]] = defaultdict(list)
+        for f in failures:
+            by_code[f.code].append(f)
+
+        for code in sorted(by_code):
+            info = get_error_description(code)
+            lines.append(f"错误码 {code} ({info['title']}): {info['description']}")
+            lines.append(f"  → 修正: {info['fix_hint']}")
+            for cf in by_code[code]:
+                lines.append(cf.to_llm_feedback())
+            lines.append("")
+
+        lines += [
             "===== 只修不分析 =====",
             "  1. 只修改 JSON 内容，不要写任何分析/解释文字。",
             "  2. 直接输出纯 JSON，不要 markdown 代码块。",

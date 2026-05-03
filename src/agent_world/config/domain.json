@@ -5,15 +5,16 @@
     "interaction_rules": "贴士：同区域的 NPC 可以交互；有数量边(qty)的关系表示持有、产出或消耗。"
   },
   "verification": {
-    "translation_layer_mask": [true, true, false, true, false, false],
-    "prewrite_layer_mask": [true, false, true, false, false, false],
+    "translation_layer_mask": [true, true, false, true, false, false, false],
+    "prewrite_layer_mask": [true, false, true, false, false, false, true],
     "check_names": [
       "entity_existence",
       "quantity_accuracy",
       "capacity_upper_bound",
       "entity_coverage",
       "direction_pairing",
-      "story_consistency"
+      "story_consistency",
+      "degree_conservation"
     ]
   },
   "world_name": "Witcher",
