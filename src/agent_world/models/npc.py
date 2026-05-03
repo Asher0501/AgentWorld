@@ -43,7 +43,7 @@ class PhysicalAttributes(BaseModel):
     energy_capacity: float = Field(default=100.0, ge=0.0, description="最大活力上限")
     health: float = Field(default=100.0, ge=0.0, description="生命值")
     recovery_speed: float = Field(default=1.0, ge=0.0, description="恢复速度倍率")
-    age: int = Field(default=30, ge=0, le=150, description="年龄")
+    age: int = Field(default=30, ge=0, le=300, description="年龄")
 
 
 class PersonaTags(BaseModel):

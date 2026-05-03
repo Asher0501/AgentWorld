@@ -71,90 +71,32 @@ class RecipeRegistry:
     _zone_index: ClassVar[dict[str, list[str]]] = {}
     _object_type_index: ClassVar[dict[str, list[str]]] = {}
 
-    # ─── 内置配方 ───
-
-    _DEFAULT_RECIPES: ClassVar[list[Recipe]] = [
-        Recipe(
-            name="烘焙面包",
-            inputs={"小麦": 2},
-            outputs={"面包": 1},
-            required_object_type="烤炉",
-            required_object_interface="烤制",
-            zone_id="farm",
-            vitality_cost=5,
-            description="用磨具将小麦磨粉后在烤炉烘焙",
-        ),
-        Recipe(
-            name="碾磨面粉",
-            inputs={"小麦": 3},
-            outputs={"面粉": 2},
-            required_object_type="磨具",
-            required_object_interface="研磨",
-            zone_id="farm",
-            vitality_cost=8,
-            description="用磨具将小麦磨成面粉",
-        ),
-        Recipe(
-            name="锻造工具",
-            inputs={"铁锭": 2},
-            outputs={"工具": 1},
-            required_object_type="铁砧",
-            required_object_interface="锻造",
-            zone_id="market",
-            vitality_cost=8,
-            description="在铁砧上锻造工具",
-        ),
-        Recipe(
-            name="酿酒",
-            inputs={"小麦": 3, "蔬菜": 1},
-            outputs={"酒": 2},
-            required_object_type="酿酒桶",
-            required_object_interface="酿造",
-            zone_id="tavern",
-            vitality_cost=10,
-            description="用酿酒桶酿造酒",
-        ),
-        Recipe(
-            name="制作药水",
-            inputs={"草药": 3},
-            outputs={"药水": 1},
-            required_object_type="药臼",
-            required_object_interface="研磨",
-            zone_id="temple",
-            vitality_cost=5,
-            description="用药臼研磨草药制成药水",
-        ),
-        Recipe(
-            name="加工皮毛",
-            inputs={"皮毛": 2},
-            outputs={"衣物": 1},
-            required_object_type="缝纫台",
-            required_object_interface="缝制",
-            zone_id="forest",
-            vitality_cost=8,
-            description="在缝纫台上将皮毛加工成衣物",
-        ),
-        Recipe(
-            name="建造家具",
-            inputs={"木材": 3},
-            outputs={"家具": 1},
-            required_object_type="工作台",
-            required_object_interface="建造",
-            zone_id="market",
-            vitality_cost=15,
-            description="在工作台上建造家具",
-        ),
-    ]
-
     @classmethod
     def init_defaults(cls):
+        """从 domain.json 加载配方定义"""
         cls._recipes.clear()
         cls._zone_index.clear()
         cls._object_type_index.clear()
-        for r in cls._DEFAULT_RECIPES:
-            cls._register_builtin(r)
+        cls._load_from_domain()
         # Sync process chains to DerivationRegistry
         cls._sync_to_derivation_registry()
+
+    @classmethod
+    def _load_from_domain(cls):
+        """从 domain.json 读取配方注册"""
+        from ..config.config_loader import get_domain_recipes
+        for rdef in get_domain_recipes():
+            recipe = Recipe(
+                name=rdef["name"],
+                inputs=rdef.get("inputs", {}),
+                outputs=rdef.get("outputs", {}),
+                required_object_type=rdef.get("tool"),
+                required_object_interface=rdef.get("tool_interface"),
+                zone_id=rdef.get("zone"),
+                vitality_cost=rdef.get("vitality_cost", 10),
+                description=rdef.get("description", ""),
+            )
+            cls._register_builtin(recipe)
 
     @classmethod
     def _sync_to_derivation_registry(cls):

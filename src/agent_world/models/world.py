@@ -28,6 +28,20 @@ class ZoneType(str, Enum):
     TEMPLE = "temple"
     BARRACKS = "barracks"
     OUTSKIRTS = "outskirts"
+    FORGE = "forge"
+    ALCHEMY_HUT = "alchemy_hut"
+    HERB_GARDEN = "herb_garden"
+    OLD_TEMPLE = "old_temple"
+    OXENFURT = "oxenfurt"
+    HARBOR = "harbor"
+    KAER_MORHEN = "kaer_morhen"
+    # 猎魔人世界扩展
+    WHITE_ORCHARD = "white_orchard"
+    MARKET_SQUARE = "market_square"
+    FOX_AND_GOOSE = "fox_and_goose"
+    THE_FORGE = "the_forge"
+    ALCHEMIST_HUT = "alchemist_hut"
+    TEMPLE_RUINS = "temple_ruins"
 
     # 额外类型可以通过 zone_type 字段传入（Pydantic 允许任意字符串）
 

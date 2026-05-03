@@ -26,6 +26,7 @@ _TYPE_PREFIX_TO_ID: dict[str, int] = {}            # "npc_" → 1
 _ENTITIES: dict[str, list[dict]] = {}              # "zones" / "items" / "objects"
 _ENTITY_INDEX: dict[str, dict[str, dict]] = {}     # type → {id → entity}
 _ZONE_CONNECTIONS: dict[str, list[str]] = {}       # zone_id → [connected zone_ids]
+_RAW_CONFIG: dict[str, Any] = {}                    # 完整原始配置
 _WORLD_CONFIG: dict[str, Any] = {}                 # world 顶级配置
 _LABEL_MAP: dict[str, str] = {}                    # 实体名称 → 拓扑标签
 
@@ -38,7 +39,9 @@ def _load() -> None:
     with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
         config = json.load(f)
 
-    # ── 0. 世界顶级配置 ──
+    # ── 0. 原始配置 + 世界顶级配置 ──
+    _RAW_CONFIG.clear()
+    _RAW_CONFIG.update(config)
     _WORLD_CONFIG.clear()
     _WORLD_CONFIG.update(config.get("world", {}))
 
@@ -248,6 +251,21 @@ def get_world_config(key: str, default=None):
     return _WORLD_CONFIG.get(key, default)
 
 
+def get_verification_config(key: str, default=None):
+    """获取 verification 校验配置（注册表/重试次数等）"""
+    _load()
+    v = _RAW_CONFIG.get("verification", {})
+    return v.get(key, default)
+
+
+def is_verification_check_enabled(check_name: str) -> bool:
+    """查询特定校验项是否开启"""
+    _load()
+    checks = _RAW_CONFIG.get("verification", {}).get("checks", {})
+    check = checks.get(check_name, {})
+    return check.get("enabled", False)
+
+
 # ─── Zone 对象构建 ───
 
 def build_zone_models() -> list[dict]:
@@ -313,6 +331,42 @@ def _type_name(type_id: int) -> str:
     """仅供内部调试/提示词使用。引擎代码不应依赖此函数。"""
     _load()
     return _TYPE_DEFS.get(type_id, {}).get("id", "unknown")
+
+
+# ─── domain.json 加载（域特定内容）───
+
+_DOMAIN_PATH = os.path.join(os.path.dirname(__file__), "domain.json")
+_DOMAIN_CACHE: dict[str, Any] | None = None
+
+
+def _load_domain() -> dict:
+    """加载 domain.json（幂等）"""
+    global _DOMAIN_CACHE
+    if _DOMAIN_CACHE is not None:
+        return _DOMAIN_CACHE
+    with open(_DOMAIN_PATH, "r", encoding="utf-8") as f:
+        _DOMAIN_CACHE = json.load(f)
+    return _DOMAIN_CACHE
+
+
+def get_domain_zones() -> list[dict]:
+    """返回 domain.json 中的区域对象定义列表"""
+    return _load_domain().get("zones", [])
+
+
+def get_domain_recipes() -> list[dict]:
+    """返回 domain.json 中的配方定义列表"""
+    return _load_domain().get("recipes", [])
+
+
+def get_domain_npc_zones() -> dict[str, str]:
+    """返回 domain.json 中 NPC 初始区域映射 {npc_name: zone_id}"""
+    return _load_domain().get("npc_initial_zones", {})
+
+
+def get_domain_adapter() -> dict:
+    """返回 domain.json 中的 adapter 段（所有 slot 文本）"""
+    return _load_domain().get("adapter", {})
 
 
 # ─── 初始化（显示加载状态）───

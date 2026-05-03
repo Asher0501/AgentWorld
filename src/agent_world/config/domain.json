@@ -1,0 +1,234 @@
+{
+  "_schema": 2,
+  "topology_translator": {
+    "entity_types": "顶点类型包括：NPC（npc，角色卡）、物品（item，可持有/交易）、区域（zone，地点）。",
+    "interaction_rules": "贴士：同区域的 NPC 可以交互；有数量边(qty)的关系表示持有、产出或消耗。"
+  },
+  "verification": {
+    "translation_layer_mask": [true, true, false, true, false, false],
+    "prewrite_layer_mask": [true, false, true, false, false, false],
+    "check_names": [
+      "entity_existence",
+      "quantity_accuracy",
+      "capacity_upper_bound",
+      "entity_coverage",
+      "direction_pairing",
+      "story_consistency"
+    ]
+  },
+  "world_name": "Witcher",
+  "zones": [
+    {
+      "id": "white_orchard",
+      "zone_type": "village",
+      "objects": [
+        {
+          "type": "STALL",
+          "count": 2
+        },
+        {
+          "type": "OVEN"
+        },
+        {
+          "type": "MILL"
+        }
+      ]
+    },
+    {
+      "id": "market_square",
+      "zone_type": "market",
+      "objects": [
+        {
+          "type": "STALL",
+          "count": 4
+        },
+        {
+          "type": "ANVIL"
+        }
+      ]
+    },
+    {
+      "id": "fox_and_goose",
+      "zone_type": "tavern",
+      "objects": [
+        {
+          "type": "BAR_COUNTER",
+          "count": 3
+        },
+        {
+          "type": "BREWING_VAT"
+        }
+      ]
+    },
+    {
+      "id": "herb_garden",
+      "zone_type": "farm",
+      "objects": [
+        {
+          "type": "FARM_PLOT",
+          "count": 3
+        },
+        {
+          "type": "OVEN"
+        },
+        {
+          "type": "MILL"
+        }
+      ]
+    },
+    {
+      "id": "forest",
+      "zone_type": "forest",
+      "objects": [
+        {
+          "type": "FOREST_HUNTING_GROUND",
+          "count": 3
+        }
+      ]
+    }
+  ],
+  "recipes": [
+    {
+      "name": "研磨魔药",
+      "zone": "alchemist_hut",
+      "tool": "研钵",
+      "tool_interface": "研磨",
+      "inputs": {
+        "草药": 3
+      },
+      "outputs": {
+        "魔药": 1
+      },
+      "vitality_cost": 5,
+      "description": "在研钵中研磨草药配合炼金溶剂制成魔药"
+    },
+    {
+      "name": "冶炼矿石",
+      "zone": "the_forge",
+      "tool": "铁砧",
+      "tool_interface": "锻造",
+      "inputs": {
+        "矿石": 2
+      },
+      "outputs": {
+        "武器": 1
+      },
+      "vitality_cost": 8,
+      "description": "在铁砧上冶炼矿石锻造武器"
+    },
+    {
+      "name": "烹饪炖菜",
+      "zone": "fox_and_goose",
+      "tool": "壁炉",
+      "tool_interface": "烹饪",
+      "inputs": {
+        "草药": 1,
+        "食物": 2
+      },
+      "outputs": {
+        "食物": 3
+      },
+      "vitality_cost": 5,
+      "description": "用壁炉和草药炖煮香浓的肉菜羹"
+    },
+    {
+      "name": "酿造麦酒",
+      "zone": "fox_and_goose",
+      "tool": "壁炉",
+      "tool_interface": "酿造",
+      "inputs": {
+        "食物": 2
+      },
+      "outputs": {
+        "酒": 2
+      },
+      "vitality_cost": 8,
+      "description": "用壁炉发酵酿造麦酒"
+    },
+    {
+      "name": "附魔饰品",
+      "zone": "temple_ruins",
+      "tool": "水晶球",
+      "tool_interface": "附魔",
+      "inputs": {
+        "星辉石": 2,
+        "魔法饰品": 1
+      },
+      "outputs": {
+        "魔法饰品": 1
+      },
+      "vitality_cost": 10,
+      "description": "用星辉石在魔法饰品上施加祝福附魔"
+    },
+    {
+      "name": "装订法术书",
+      "zone": "oxenfurt",
+      "inputs": {
+        "古籍残页": 2
+      },
+      "outputs": {
+        "法术书": 1
+      },
+      "vitality_cost": 6,
+      "description": "将古籍残页整理装订成册"
+    }
+  ],
+  "npc_initial_zones": {
+    "杰洛特": "white_orchard",
+    "丹德里恩": "fox_and_goose",
+    "希里": "forest",
+    "卓尔坦": "market_square",
+    "哈托里": "market_square",
+    "特莉丝": "herb_garden",
+    "托蜜拉": "herb_garden",
+    "莎拉": "fox_and_goose",
+    "叶奈法": "herb_garden",
+    "凯拉": "market_square",
+    "乞丐王": "fox_and_goose",
+    "维瑟米尔": "forest"
+  },
+  "adapter": {
+    "survival_needs": "━━━ 基本生存需求 ━━━\n你有3项基本生存属性。任何一项降到0，你都会出局。\n猎魔人的世界不相信眼泪——无论是天球交汇的怪物\n还是饥饿与疲惫，都不会给你第二次机会。\n\n当前: 活力 {v:.0f}/100 | 饱食 {s:.0f}/100 | 心境 {m:.0f}/100\n\n根据你的身份和性格，自己判断：\n  - 你的体力（活力）还能撑多久？\n  - 你的饱腹需要什么时候补充？\n  - 你的心情需要什么来调节——一杯酒？一笔生意？一段冒险？\n\n工作、交易、社交——所有目标都在活下去的前提下进行。\n",
+    "entity_identity": "## NPC: {name}\n角色: {role} | 位置: {zone}\n活力: {v:.0f}/100  |  饱食: {s:.0f}/100  |  心境: {m:.0f}/100\n\n",
+    "personality_format": "### 性格标签\n{t}\n\n",
+    "recent_info_default": "### 近况\n  {info}\n\n",
+    "inventory": "### 当前持有\n{items}\n\n",
+    "inventory_empty": "### 当前持有\n空手\n\n",
+    "zone_others": "### 当前区域还有\n{others}\n\n",
+    "decision_guidance": "### 决策\n请为 {name} 决定下一步行动。\n用自然语言描述：你想做什么？在哪里做？有什么影响？为什么？\n不用输出 JSON，不用关心格式，直接说你想干嘛。\n\n格式示例：我叫{name}，我是{role}。我目前在{zone}，持有金币x8、魔药x2。\n我决定去炼金小屋找特莉丝买点魔药，顺便打听附近的水鬼巢穴。\n用第一人称说人话就行。\n",
+    "system_role": {
+      "llm2": "你是一个世界模拟引擎的拓扑结构变更模块（LLM #2）。\n你的任务：根据每个角色（NPC）的自然语言计划，输出拓扑结构变更操作。\n\n",
+      "llm3": "你是世界模拟引擎的故事叙事层。\n你的任务：为以下场景写一段生动的故事。\n用【场景】开头，用小说般的语言描写。不要输出任何结构化的格式。\n\n",
+      "llm4a": "你是一个世界模拟引擎的**拓扑变化推理模块**（LLM #4a）。\n\n你的任务：根据角色们的计划、故事叙事以及当前拓扑状态，\n推理出本次 tick 的**图结构变化**（边的数量增删）。\n\n",
+      "llm4b": "你是一个世界模拟引擎的**内容变化推理模块**（LLM #4b）。\n\n你的任务：根据角色们的计划、故事叙事以及已执行的拓扑变更，\n推理出本次 tick 的**属性变化和近况摘要**。\n\n"
+    },
+    "combined_header": "每个角色（NPC）的 prompt 分为 [拓扑]（纯结构，无名称）和 [内容]（语义信息+标签映射）两段。\n输出时使用 [内容] 段的 entity_id。\n\n共 {count} 个角色。\n",
+    "output_instructions": {
+      "llm2": "==== 最终输出格式 ====\n输出一个 JSON 对象，key 为 NPC entity_id，value 为操作数组：\n{\n  \"npc_abc123\": [\n    {\"op\": \"connect\", \"src\": \"npc_abc123\", \"tgt\": \"zone_广场\", \"qty\": 0},\n    {\"op\": \"disconnect\", \"src\": \"npc_abc123\", \"tgt\": \"zone_酒馆\"}\n  ],\n  \"npc_def456\": [...]\n}\n不要多余文字，不要 markdown 代码块。\n",
+      "llm3": "请为以上场景写一段故事。一段即可。\n用【场景】开头，后面不要加标题名称。\n示例：\n【场景】午后的阳光穿过树叶的缝隙，洒在广场的石板路上...\n"
+    },
+    "entity_blocks_header": "【角色和物体】\n\n",
+    "inventory_block_format": "【库存】\n{lines}\n\n",
+    "event_input_empty": "  （无交互事件）\n",
+    "event_input_lines": {
+      "npc_zone_stayed": "  · {source} 在原地驻足",
+      "npc_zone_arrived": "  · {source} 来到此处",
+      "npc_npc_failed": "  · {source} 试图找 {target}，但没成功",
+      "npc_npc_interact": "  · {source} 与 {target} 有互动",
+      "npc_object_use": "  · {source} 使用 {target}"
+    },
+    "npc_state_header": "==== 当前 NPC 状态 ====\n",
+    "npc_state_line": "- {name}（{role}）@{zone} | 活力{v:.0f}/100 饱食{s:.0f}/100 心境{m:.0f}/100 | 持有：{inv}",
+    "plans_header": "==== 每位 NPC 的本轮计划 ====\n",
+    "stories_header": "==== 本轮故事叙事 ====\n",
+    "story_separator": "--- 事件 {i} ---",
+    "guidance_syntax": "==== [拓扑] 引导 ====\n支持的操作类型（可以同时出现，不是互斥）：\n· recipe：配方转换（消耗一组物品生产另一组）\n  {\"op\": \"recipe\", \"src\": \"哈托里\", \"consumes\": {\"item_矿石\": 3}, \"produces\": {\"item_武器\": 1}}\n  ——守恒校验跳过（配方内部自平衡）\n· system_delta：系统间物品转移\n  {\"op\": \"system_delta\", \"tgt\": \"杰洛特\", \"item\": \"item_魔药\", \"delta\": -1}\n  ——守恒校验跳过\n· delta：修改边的数量（必须成对，Σ=0）\n  {\"op\": \"delta\", \"src\": \"杰洛特\", \"tgt\": \"item_金币\", \"delta\": -2}\n  src/tgt 用名称，系统自动映射到实体 ID\n· set_qty：设置边的数量\n  {\"op\": \"set_qty\", \"src\": \"杰洛特\", \"tgt\": \"item_魔药\", \"qty\": 2}\n· connect/disconnect 格式由 LLM #2 处理 — LLM #4a 不输出拓扑变更。\n\n**累计流出约束**: 同一节点 A 对同一标签 I 输出多条 delta 时，\n这些 delta 的绝对值之和不能超过边 (A→I) 的当前数量。\n例如特莉丝→金币 qty=8，不能同时输出 -5 和 -4。\n若有需要，请合并为单条 delta（如 -8），\n或确保总和不超余额后拆分输出。\n\n",
+    "output_format": {
+      "llm4a": "==== 输出格式 ====\n{ \"operations\": [...] }\n\n只输出 JSON，不要多余文字，不要 markdown 代码块。\n\n示例（delta + system_delta 共存）：\n{\"operations\": [\n  {\"op\": \"delta\", \"src\": \"杰洛特\", \"tgt\": \"item_金币\", \"delta\": -2},\n  {\"op\": \"delta\", \"src\": \"特莉丝\", \"tgt\": \"item_金币\", \"delta\": 2},\n  {\"op\": \"delta\", \"src\": \"特莉丝\", \"tgt\": \"item_魔药\", \"delta\": -1},\n  {\"op\": \"delta\", \"src\": \"杰洛特\", \"tgt\": \"item_魔药\", \"delta\": 1},\n  {\"op\": \"system_delta\", \"tgt\": \"杰洛特\", \"item\": \"item_魔药\", \"delta\": -1}\n]}\n\n示例（recipe 单独）：\n{\"operations\": [\n  {\"op\": \"recipe\", \"src\": \"哈托里\", \"consumes\": {\"item_矿石\": 3}, \"produces\": {\"item_武器\": 1}}\n]}\n",
+      "llm4b": "==== [内容] 输出格式 ====\n根据故事中的活动输出 attr + recent_info：\n1. 诚实反映故事里的属性变化\n2. 只要 NPC 有活动，就输出 attr\n3. 不需要输出任何物品边操作\n4. 所有 attr 都必须在 recent_info 中有对应叙述\n\n属性常识：\n- 交易成功→心境+，交易失败→心境-\n- 活动消耗活力，休息恢复活力\n- 吃东西增加饱食\n\nrecent_info 写作：\n- NPC 用第一人称\n- zone 写「这里发生了什么」\n- 每条 20-60 字\n\n输出格式：\n{\n  \"operations\": [{\"op\": \"attr\", \"target\": \"实体名\", \"attr\": \"属性名\", \"delta\": N, \"description\": \"描述\"}],\n  \"recent_info\": {\"实体名\": \"近况摘要\"}\n}\n\n示例：\n{\n  \"operations\": [\n    {\"op\": \"attr\", \"target\": \"杰洛特\", \"attr\": \"vitality\", \"delta\": -8, \"description\": \"在市场寻找炼金材料\"},\n    {\"op\": \"attr\", \"target\": \"丹德里恩\", \"attr\": \"mood\", \"delta\": 5, \"description\": \"在酒馆唱歌赢得喝彩\"}\n  ],\n  \"recent_info\": {\n    \"杰洛特\": \"我在白果园广场转了一圈，打算去炼金小屋找特莉丝\",\n    \"丹德里恩\": \"在酒馆唱了一首叙事诗，听众赏了几个铜板\",\n    \"白果园广场\": \"广场上人来人往，告示栏前围了几个人\"\n  }\n}\n"
+    },
+    "recent_info_guidance": "==== 节点近况投影 ====\n请根据本轮故事，为故事中涉及到的节点生成近况摘要。\n近况会成为该节点下个 tick 的上下文。\n\n规则：\n- 每条 20-60 字，简洁但有信息量\n- NPC 用第一人称（「我做了什么」），zone 写「这里发生了什么」\n- 没有事件可以不写\n- 不是 NPC 的节点也可以写（zone、item 等）\n\n",
+    "attr_constraints": "==== [内容] 约束 ====\n□ attr 值域：vitality / satiety / mood 均在 0-100 范围内\n□ 每条 attr 必须有对应的 recent_info 条目\n□ recent_info 每条 20-60 字\n□ 至少输出 1 条 attr 操作\n\n",
+    "attr_knowledge": "==== [内容] 引导 ====\n根据故事中的活动输出 attr + recent_info：\n1. 诚实反映故事里的属性变化（活力消耗、饱食变化、心境波动）\n2. 只要 NPC 有活动，就输出 attr\n3. 不需要输出任何物品边操作（delta / system_delta / recipe）\n4. 所有 attr 都必须在 recent_info 中有对应叙述\n\n属性常识：\n- 交易成功→心境+，交易失败→心境-\n- 活动消耗活力，休息恢复活力\n- 吃东西增加饱食\n\nrecent_info 写作：\n- NPC 用第一人称（「我做了什么」）\n- zone 写「这里发生了什么」\n- 每条 20-60 字，有信息量\n- 不是 NPC 的节点也可以写（zone、item 等）\n\n"
+  }
+}

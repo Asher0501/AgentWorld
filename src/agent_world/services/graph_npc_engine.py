@@ -34,7 +34,9 @@ from .interaction_resolver import InteractionResolver
 from .intent_executor import IntentResolver
 from .post_processor import PostProcessor
 from .interaction_layer import InteractionLayer
-from .village_adapter import VillageDomainAdapter
+from .verification_layer import VerificationLayer
+from ..config.config_loader import get_verification_config
+from .domain_adapter import DomainAdapter
 from .prompt_assembler import assemble
 
 
@@ -110,7 +112,7 @@ class GraphNPCEngine:
         self._current_world_time_str = ""
         self._current_time_of_day = ""
         self._tick_duration_str = ""
-        self._adapter = VillageDomainAdapter()
+        self._adapter = DomainAdapter()
 
     def add_listener(self, listener: Callable):
         self._listeners.append(listener)
@@ -354,15 +356,8 @@ class GraphNPCEngine:
                 for det in outcome.details:
                     logger.info(f"[度守恒]   {det}")
 
-        # ─── Step 5b: 执行 #4a 拓扑操作 ───
-        if topo_ops:
-            result = self.graph_engine.apply_edge_operations(topo_ops)
-            logger.info(f"[Engine] #4a 拓扑操作执行: {result['status']}")
-            if result.get("errors"):
-                for err in result["errors"]:
-                    logger.warning(f"[Engine]   增量错误: {err}")
-
-        # ─── Step 5c: LLM #4b — 内容层操作 (attr + recent_info) ───
+        # ─── Step 5b: LLM #4b — 内容层操作 (attr + recent_info) ───
+        # 在 #4a 执行之前运行，以便 LLM #5 能同时校验两者
         attr_ops, recent_info_map = pp.resolve_attr_and_recent(
             npc_plans=npc_plans,
             stories=stories,
@@ -372,7 +367,58 @@ class GraphNPCEngine:
         )
         logger.info(f"[LLM #4b] {len(attr_ops)} attr, {len(recent_info_map)} 条近况")
 
-        # ─── Step 5d: 写入近况投影到实体 ───
+        # ─── Step 5c: LLM #5 — 纯校验 + 重试 ───
+        vl = VerificationLayer(
+            resolver=self._resolver,
+            adapter=self._adapter,
+            graph_engine=self.graph_engine,
+            llm_available=self.llm_available,
+        )
+
+        max_retries = get_verification_config("max_retries", 1)
+        for attempt in range(max_retries + 1):
+            failures = vl.check_all(stories, topo_ops, attr_ops, recent_info_map)
+            if not failures:
+                logger.info(f"[LLM #5] 校验通过 (attempt {attempt + 1})")
+                break
+
+            if attempt >= max_retries:
+                logger.warning(f"[LLM #5] 已达最大重试次数 ({max_retries})，使用当前输出继续")
+                break
+
+            # 构建反馈 → 重跑 LLM #4a + #4b
+            feedback = VerificationLayer.build_feedback(failures)
+            logger.warning(f"[LLM #5] 校验失败 ({len(failures)} 项)，重试 #{attempt + 2}")
+
+            topo_ops = pp.resolve_topology_changes(
+                npc_plans=npc_plans,
+                stories=stories,
+                graph_engine=self.graph_engine,
+                world_time_str=self._current_world_time_str,
+                tick_duration_str=self._tick_duration_str,
+                feedback=feedback,
+            )
+            attr_ops, recent_info_map = pp.resolve_attr_and_recent(
+                npc_plans=npc_plans,
+                stories=stories,
+                graph_engine=self.graph_engine,
+                world_time_str=self._current_world_time_str,
+                tick_duration_str=self._tick_duration_str,
+                feedback=feedback,
+            )
+            # 继续循环 → 重新校验
+
+        logger.info(f"[LLM #5] 最终: {len(topo_ops)} topo, {len(attr_ops)} attr, {len(recent_info_map)} ri")
+
+        # ─── Step 5d: 执行 #4a 拓扑操作 ───
+        if topo_ops:
+            result = self.graph_engine.apply_edge_operations(topo_ops)
+            logger.info(f"[Engine] #4a 拓扑操作执行: {result['status']}")
+            if result.get("errors"):
+                for err in result["errors"]:
+                    logger.warning(f"[Engine]   增量错误: {err}")
+
+        # ─── Step 5e: 写入近况投影到实体 ───
         if recent_info_map:
             from ..config.node_ontology import has_recent_info
             written = 0
@@ -382,9 +428,9 @@ class GraphNPCEngine:
                     ent.recent_info = text
                     written += 1
             if written:
-                logger.info(f"[LLM #4b] 近况投影写入 {written} 个实体")
+                logger.info(f"[LLM #5] 近况投影写入 {written} 个实体")
 
-        # ─── Step 5e: 执行 #4b attr 操作 ───
+        # ─── Step 5f: 执行 #4b attr 操作 ───
         if attr_ops:
             result = self.graph_engine.apply_edge_operations(attr_ops)
             logger.info(f"[Engine] #4b attr 执行: {result['status']} ({len(result['results'])} 条)")
@@ -697,10 +743,12 @@ class GraphNPCEngine:
                 continue
 
             # 位置：从 1-hop 子图中找 zone 连接
+            # 写 eid（如 zone_狐狸与鹅酒馆）而非 display name，
+            # 保证下个 tick init_graph_edges_from_adapter 能正确解析。
             for conn in ent.connected_entity_ids:
                 e = self.graph_engine.get_entity(conn)
                 if e and has_role(e.type_id, "region"):
-                    npc.position.zone_id = e.name
+                    npc.position.zone_id = e.entity_id
                     break
 
             # 属性

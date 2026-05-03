@@ -24,13 +24,21 @@ logs/
 # Internal task docs
 tasks/
 
-# Test files
+# Test & run scripts
 tests/
 test_*.py
+run_*_test.py
+run_*tick*.py
+run_*npc_*.py
+run_minimal_*.py
+run_full_fix*.py
 run_test.sh
 test_tick.sh
 quick_test.py
 p2.sh
+
+# Per-tick run outputs
+/tmp/5tick_run/
 
 # IDE & OS
 .idea/

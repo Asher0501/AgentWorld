@@ -576,61 +576,82 @@ class WorldObjectManager:
 
     def init_default_world(self, zones: list[dict]):
         """
-        根据 world zones 创建默认实体。
-        
-        zones: list of {id, zone_type, ...}
+        根据 world zones 和 domain.json 对象定义创建默认实体。
+
+        zones: list of {id, zone_type, ...} (来自 node_config.json)
+        对象定义从 domain.json 的 "zones" 段读取。
         """
-        zone_types_map = {
-            "market": (ObjectType.STALL, 4),
-            "farm": (ObjectType.FARM_PLOT, 3),
-            "mine": (ObjectType.ORE_VEIN, 2),
-            "tavern": (ObjectType.BAR_COUNTER, 3),  # 1 吧台 + 2 桌子
-            "library": (ObjectType.LIBRARY_DESK, 2),
-            "temple": (ObjectType.TEMPLE_ALTAR, 1),
-            "barracks": (ObjectType.BARRACKS_EQUIPMENT, 2),
-            "forest": (ObjectType.FOREST_HUNTING_GROUND, 3),
+        from ..config.config_loader import get_domain_zones
+
+        # 构建 zone_id → 对象定义 索引
+        domain_zone_objects: dict[str, list[dict]] = {}
+        for dz in get_domain_zones():
+            domain_zone_objects[dz["id"]] = dz.get("objects", [])
+
+        # 对象类型 → 构造类映射
+        _OBJ_CLASSES: dict[str, type] = {
+            "STALL": Stall,
+            "FARM_PLOT": FarmPlot,
+            "ORE_VEIN": OreVein,
+            "BAR_COUNTER": BarCounter,
+            "LIBRARY_DESK": LibraryDesk,
+            "TEMPLE_ALTAR": TempleAltar,
+            "BARRACKS_EQUIPMENT": BarracksEquipment,
+            "FOREST_HUNTING_GROUND": ForestHuntingGround,
+            "ANVIL": Object,
+            "OVEN": Object,
+            "MILL": Object,
+            "BREWING_VAT": Object,
+            "MORTAR": Object,
+            "SEWING_TABLE": Object,
+            "WORKBENCH": Object,
+        }
+
+        # 对象类型 → ObjectType 映射
+        _OBJ_TYPES: dict[str, ObjectType] = {
+            "STALL": ObjectType.STALL,
+            "FARM_PLOT": ObjectType.FARM_PLOT,
+            "ORE_VEIN": ObjectType.ORE_VEIN,
+            "BAR_COUNTER": ObjectType.BAR_COUNTER,
+            "LIBRARY_DESK": ObjectType.LIBRARY_DESK,
+            "TEMPLE_ALTAR": ObjectType.TEMPLE_ALTAR,
+            "BARRACKS_EQUIPMENT": ObjectType.BARRACKS_EQUIPMENT,
+            "FOREST_HUNTING_GROUND": ObjectType.FOREST_HUNTING_GROUND,
+            "ANVIL": ObjectType.ANVIL,
+            "OVEN": ObjectType.OVEN,
+            "MILL": ObjectType.MILL,
+            "BREWING_VAT": ObjectType.BREWING_VAT,
+            "MORTAR": ObjectType.MORTAR,
+            "SEWING_TABLE": ObjectType.SEWING_TABLE,
+            "WORKBENCH": ObjectType.WORKBENCH,
         }
 
         for zone in zones:
             zone_id = zone.get("id", "")
-            zone_type = zone.get("zone_type", "")
-            if zone_type in zone_types_map:
-                obj_type, count = zone_types_map[zone_type]
-                for i in range(count):
-                    name = f"{zone_id}_{obj_type.value}_{i+1}"
-                    if obj_type == ObjectType.STALL:
-                        obj = Stall(zone_id=zone_id, name=name)
-                    elif obj_type == ObjectType.FARM_PLOT:
-                        obj = FarmPlot(zone_id=zone_id, name=name)
-                    elif obj_type == ObjectType.ORE_VEIN:
-                        obj = OreVein(zone_id=zone_id, name=name, richness=0.8)
-                    elif obj_type == ObjectType.BAR_COUNTER:
-                        obj = BarCounter(zone_id=zone_id, name=name)
-                    elif obj_type == ObjectType.LIBRARY_DESK:
-                        obj = LibraryDesk(zone_id=zone_id, name=name)
-                    elif obj_type == ObjectType.TEMPLE_ALTAR:
-                        obj = TempleAltar(zone_id=zone_id, name=name)
-                    elif obj_type == ObjectType.BARRACKS_EQUIPMENT:
-                        obj = BarracksEquipment(zone_id=zone_id, name=name)
-                    elif obj_type == ObjectType.FOREST_HUNTING_GROUND:
-                        obj = ForestHuntingGround(zone_id=zone_id, name=name)
-                    else:
-                        continue
-                    self.add(obj)
+            obj_defs = domain_zone_objects.get(zone_id, [])
+            for obj_def in obj_defs:
+                obj_type_str = obj_def["type"]
+                count = obj_def.get("count", 1)
+                name_prefix = obj_def.get("name", obj_type_str)
 
-        # 创建配方工具物体（统一为 object，走 WorldObject 基类路径）
-        tool_defs = [
-            ("铁砧", "market", ObjectType.ANVIL),
-            ("烤炉", "farm", ObjectType.OVEN),
-            ("磨具", "farm", ObjectType.MILL),
-            ("酿酒桶", "tavern", ObjectType.BREWING_VAT),
-            ("药臼", "temple", ObjectType.MORTAR),
-            ("缝纫台", "forest", ObjectType.SEWING_TABLE),
-            ("工作台", "market", ObjectType.WORKBENCH),
-        ]
-        for tool_name, tool_zone, obj_type in tool_defs:
-            obj = Object(zone_id=tool_zone, name=tool_name, object_type=obj_type)
-            self.add(obj)
+                obj_cls = _OBJ_CLASSES.get(obj_type_str)
+                obj_type = _OBJ_TYPES.get(obj_type_str)
+                if obj_cls is None or obj_type is None:
+                    continue
+
+                for i in range(count):
+                    if count > 1:
+                        name = f"{zone_id}_{name_prefix}_{i+1}"
+                    else:
+                        name = f"{zone_id}_{name_prefix}"
+
+                    if obj_cls == OreVein:
+                        obj = obj_cls(zone_id=zone_id, name=name, richness=0.8)
+                    elif obj_cls == Object:
+                        obj = obj_cls(zone_id=zone_id, name=name, object_type=obj_type)
+                    else:
+                        obj = obj_cls(zone_id=zone_id, name=name)
+                    self.add(obj)
 
     def to_dict(self) -> list[dict]:
         return [o.to_dict() for o in self._objects.values()]

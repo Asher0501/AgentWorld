@@ -52,6 +52,7 @@ class PostProcessor:
         graph_engine: GraphEngine,
         world_time_str: str | None = None,
         tick_duration_str: str | None = None,
+        feedback: str = "",
     ) -> list[dict]:
         """
         LLM #4a: 故事 + 拓扑 → 拓扑层操作。
@@ -69,6 +70,7 @@ class PostProcessor:
             graph_engine=graph_engine,
             world_time_str=world_time_str,
             tick_duration_str=tick_duration_str,
+            feedback=feedback,
         )
 
         if not self._resolver:
@@ -94,6 +96,7 @@ class PostProcessor:
         graph_engine: GraphEngine,
         world_time_str: str | None = None,
         tick_duration_str: str | None = None,
+        feedback: str = "",
     ) -> tuple[list[dict], dict[str, str]]:
         """
         LLM #4b: 故事 + 已更新拓扑 → attr + recent_info。
@@ -111,6 +114,7 @@ class PostProcessor:
             graph_engine=graph_engine,
             world_time_str=world_time_str,
             tick_duration_str=tick_duration_str,
+            feedback=feedback,
         )
 
         if not self._resolver:
@@ -134,6 +138,7 @@ class PostProcessor:
         graph_engine: GraphEngine,
         world_time_str: str | None = None,
         tick_duration_str: str | None = None,
+        feedback: str = "",
     ) -> str:
         """构建 LLM #4a prompt：拓扑层操作。"""
         if self._adapter:
@@ -168,6 +173,7 @@ class PostProcessor:
                 npc_plans=npc_plans,
                 stories=stories,
                 topo_eids=list(topo_pool),
+                feedback=feedback,
             )
 
         # 旧版回退
@@ -217,24 +223,46 @@ class PostProcessor:
         graph_engine: GraphEngine,
         world_time_str: str | None = None,
         tick_duration_str: str | None = None,
+        feedback: str = "",
     ) -> str:
         """构建 LLM #4b prompt：内容层操作。"""
         if self._adapter:
+            # 只包含故事中提到的 NPC（大幅减少 prompt 大小）
+            story_text = " ".join(stories)
+            from ..config.config_loader import get_all_label_mappings
+            known_names = set(get_all_label_mappings().keys())
+            story_names = set()
+            for name in known_names:
+                if name in story_text:
+                    story_names.add(name)
+            # 也保留 zone 和 item（它们不是 NPC 但需要状态上下文）
+            all_ents = graph_engine.all_entities()
+            zone_names = {e.name for e in all_ents if e.type_id == "region"}
+            item_names = {e.name for e in all_ents if e.type_id == "thing"}
+            active_names = story_names | zone_names | item_names
+
             entities = []
+            active_plans = {}
             for npc_eid in npc_plans:
                 ent = graph_engine.get_entity(npc_eid)
-                if ent:
+                if ent and ent.name in active_names:
                     entities.append(ent)
+                    active_plans[npc_eid] = npc_plans[npc_eid]
+            # 如果过滤后没有 NPC，回退到全部
+            if not any(e.type_id == "actor" for e in entities):
+                entities = [graph_engine.get_entity(eid) for eid in npc_plans if graph_engine.get_entity(eid)]
+                active_plans = dict(npc_plans)
+
             return assemble(
                 "llm4b_content", self._adapter, graph_engine,
                 _caller="llm4b",
                 time_str=world_time_str,
                 tick_str=tick_duration_str,
                 entities=entities,
-                npc_plans=npc_plans,
+                npc_plans=active_plans,
                 stories=stories,
+                feedback=feedback,
             )
-
         # 旧版回退
         parts = ["你是一个世界模拟引擎的**内容变化推理模块**（LLM #4b）。","","你的任务：根据 NPC 的计划、故事叙事以及已执行的拓扑变更，","推理出本次 tick 的**属性变化和近况摘要**。",""]
         if world_time_str:

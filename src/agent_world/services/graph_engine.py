@@ -164,6 +164,16 @@ class GraphEngine:
             logger.debug(f"[Graph] 断开连接: {src_eid} ─/─ {tgt_eid}")
         return removed
 
+    def get_edge_by_name(self, src_name: str, tgt_name: str) -> InteractionEdge | None:
+        """按名称查询边（自动映射到实体 ID），不存在返回 None。
+        使用 resolve_eid() 兼容 item_/npc_ 前缀，与 apply_edge_operations 保持一致。
+        """
+        src_eid = self.resolve_eid(src_name)
+        tgt_eid = self.resolve_eid(tgt_name)
+        if not src_eid or not tgt_eid:
+            return None
+        return self.get_edge(src_eid, tgt_eid)
+
     def get_edge(self, src_eid: str, tgt_eid: str) -> InteractionEdge | None:
         """获取边（双向查询）"""
         edge = self._edge_by_pair.get((src_eid, tgt_eid))

@@ -1,36 +1,90 @@
 {
-  "version": "1.0",
-  "description": "AgentWorld 节点配置 — 定义所有节点类型、开关、实体和世界拓扑",
-
+  "version": "2.0",
+  "description": "猎魔人世界「白果园」— 12 NPC 经济体",
+  "verification": {
+    "max_retries": 1,
+    "checks": {
+      "entity_existence": {
+        "type": "dead_code",
+        "code": 1,
+        "enabled": true,
+        "description": "校验操作中的 src/tgt 是否在标签映射表中"
+      },
+      "capacity_upper_bound": {
+        "type": "dead_code",
+        "code": 2,
+        "enabled": true,
+        "description": "校验 delta 输出量不超过边当前 qty"
+      },
+      "direction_pairing": {
+        "type": "llm_batch",
+        "code": 3,
+        "enabled": false,
+        "description": "LLM 校验双向交换中标签流向是否交替"
+      },
+      "story_consistency": {
+        "type": "llm_batch",
+        "code": 4,
+        "enabled": false,
+        "description": "LLM 校验操作方向与故事描述是否一致"
+      }
+    }
+  },
   "world": {
     "default_time": {
       "hour": 8,
       "minute": 0,
       "day": 1,
-      "month": 1,
-      "year": 1
+      "month": 6,
+      "year": 1272
     },
     "allow_unregistered_entity": false,
     "zone_connections": [
-      {"from": "village_square", "to": ["market", "tavern", "library", "barracks", "temple", "farm", "forest"]},
-      {"from": "market",        "to": ["village_square", "farm"]},
-      {"from": "tavern",        "to": ["village_square", "forest"]},
-      {"from": "farm",          "to": ["village_square", "market"]},
-      {"from": "forest",        "to": ["village_square", "tavern"]},
-      {"from": "library",       "to": ["village_square", "temple"]},
-      {"from": "temple",        "to": ["village_square", "library", "barracks"]},
-      {"from": "barracks",      "to": ["village_square", "temple"]},
-      {"from": "south_market",  "to": ["market"]},
-      {"from": "east_tavern",   "to": ["tavern"]}
+      {
+        "from": "white_orchard",
+        "to": [
+          "fox_and_goose",
+          "market_square",
+          "herb_garden",
+          "forest"
+        ]
+      },
+      {
+        "from": "fox_and_goose",
+        "to": [
+          "white_orchard"
+        ]
+      },
+      {
+        "from": "market_square",
+        "to": [
+          "white_orchard"
+        ]
+      },
+      {
+        "from": "herb_garden",
+        "to": [
+          "white_orchard",
+          "forest"
+        ]
+      },
+      {
+        "from": "forest",
+        "to": [
+          "white_orchard",
+          "herb_garden"
+        ]
+      }
     ]
   },
-
   "node_types": [
     {
       "id": "npc",
       "prefix": "npc_",
       "comment": "角色节点 — BFS 全展开",
-      "roles": ["actor"],
+      "roles": [
+        "actor"
+      ],
       "switches": {
         "terminal": false,
         "same_type_block": false,
@@ -39,7 +93,15 @@
       "prompt": {
         "category": "角色",
         "order": 2,
-        "fields": ["name", "role", "mood", "satiety", "vitality", "traits", "intent"]
+        "fields": [
+          "name",
+          "role",
+          "mood",
+          "satiety",
+          "vitality",
+          "traits",
+          "intent"
+        ]
       },
       "properties": {
         "has_attributes": true,
@@ -50,7 +112,10 @@
       "id": "zone",
       "prefix": "zone_",
       "comment": "区域节点 — 同类型阻断（zone↔zone不通）",
-      "roles": ["region", "container"],
+      "roles": [
+        "region",
+        "container"
+      ],
       "switches": {
         "terminal": false,
         "same_type_block": true,
@@ -59,7 +124,10 @@
       "prompt": {
         "category": "场所",
         "order": 1,
-        "fields": ["name", "description"]
+        "fields": [
+          "name",
+          "description"
+        ]
       },
       "properties": {}
     },
@@ -67,7 +135,10 @@
       "id": "item",
       "prefix": "item_",
       "comment": "物品节点 — BFS 叶子节点",
-      "roles": ["thing", "tradable"],
+      "roles": [
+        "thing",
+        "tradable"
+      ],
       "switches": {
         "terminal": true,
         "same_type_block": false,
@@ -83,7 +154,9 @@
       "id": "object",
       "prefix": "obj_",
       "comment": "物件节点 — BFS 叶子节点，不支持 recent_info",
-      "roles": ["fixture"],
+      "roles": [
+        "fixture"
+      ],
       "switches": {
         "terminal": true,
         "same_type_block": false,
@@ -96,340 +169,762 @@
       "properties": {}
     }
   ],
-
   "entities": {
     "zones": [
       {
-        "id": "village_square",
-        "name": "村庄广场",
+        "id": "white_orchard",
+        "name": "白果园",
         "type": "zone",
-        "zone_type": "village_square",
-        "description": "村庄的中心广场，NPC 们在这里交流与交易。",
-        "bounds": {"min_x": 40, "min_y": 40, "max_x": 60, "max_y": 60},
+        "zone_type": "white_orchard",
+        "description": "白果园镇的中央空地，紧挨着村子。战争留下的弹坑已经长出了野花，石板路上有人赶着马车经过。公告栏上贴着佣兵招募和寻人启事。",
+        "bounds": {
+          "min_x": 40,
+          "min_y": 40,
+          "max_x": 60,
+          "max_y": 60
+        },
         "capacity": 20
       },
       {
-        "id": "market",
-        "name": "市场区",
+        "id": "market_square",
+        "name": "集市场",
         "type": "zone",
-        "zone_type": "market",
-        "description": "热闹的集市，商贩们在叫卖商品。",
-        "bounds": {"min_x": 60, "min_y": 40, "max_x": 80, "max_y": 60},
-        "capacity": 20
-      },
-      {
-        "id": "tavern",
-        "name": "酒馆",
-        "type": "zone",
-        "zone_type": "tavern",
-        "description": "温暖的酒馆，旅人和村民们在这里休息闲聊。",
-        "bounds": {"min_x": 20, "min_y": 40, "max_x": 40, "max_y": 60},
+        "zone_type": "market_square",
+        "description": "临时搭建的摊位挤在一起，卓尔坦的矿石摊最显眼，边上还有卖干果、布匹和各色零碎的商贩。讨价还价声不绝于耳，偶尔能听到矮人的歌谣。",
+        "bounds": {
+          "min_x": 60,
+          "min_y": 40,
+          "max_x": 80,
+          "max_y": 60
+        },
         "capacity": 15
       },
       {
-        "id": "farm",
-        "name": "农场",
+        "id": "fox_and_goose",
+        "name": "狐狸与鹅酒馆",
         "type": "zone",
-        "zone_type": "farm",
-        "description": "绿油油的农田，农民们在耕作。",
-        "bounds": {"min_x": 60, "min_y": 20, "max_x": 80, "max_y": 40},
-        "capacity": 10
+        "zone_type": "fox_and_goose",
+        "description": "白果园最热闹的酒馆，壁炉里烧着柴火，空气中混合着麦酒和炖肉的香气。墙角的竖琴早已走音，但没人计较——酒才是正经事。泥地板上满是脚印，角落里有几个牌友正吵得面红耳赤。",
+        "bounds": {
+          "min_x": 20,
+          "min_y": 40,
+          "max_x": 40,
+          "max_y": 60
+        },
+        "capacity": 12
       },
       {
-        "id": "mine",
-        "name": "矿场",
+        "id": "herb_garden",
+        "name": "托蜜拉的草药园",
         "type": "zone",
-        "zone_type": "mine",
-        "description": "阴暗的矿场，矿工们挖掘珍贵的矿石。",
-        "bounds": {"min_x": 80, "min_y": 60, "max_x": 100, "max_y": 80},
+        "zone_type": "herb_garden",
+        "description": "托蜜拉精心打理的草药园，田埂上种满了白屈花、紫菀和甘菊。蜜蜂嗡嗡，泥土湿润。林边的木栅栏上挂着晾干的草束，几只猫在阳光下的草丛里打盹。",
+        "bounds": {
+          "min_x": 0,
+          "min_y": 60,
+          "max_x": 20,
+          "max_y": 80
+        },
         "capacity": 8
       },
       {
         "id": "forest",
-        "name": "森林",
+        "name": "白果园森林",
         "type": "zone",
         "zone_type": "forest",
-        "description": "茂密的森林，偶尔有野兽出没。",
-        "bounds": {"min_x": 0, "min_y": 60, "max_x": 20, "max_y": 80},
-        "capacity": 10
-      },
-      {
-        "id": "library",
-        "name": "图书馆",
-        "type": "zone",
-        "zone_type": "library",
-        "description": "宁静的图书馆，学者们在此研究。",
-        "bounds": {"min_x": 40, "min_y": 20, "max_x": 60, "max_y": 40},
-        "capacity": 10
-      },
-      {
-        "id": "temple",
-        "name": "神庙",
-        "type": "zone",
-        "zone_type": "temple",
-        "description": "庄严的神庙，治疗师在这里治愈伤痛。",
-        "bounds": {"min_x": 20, "min_y": 20, "max_x": 40, "max_y": 40},
-        "capacity": 10
-      },
-      {
-        "id": "barracks",
-        "name": "兵营",
-        "type": "zone",
-        "zone_type": "barracks",
-        "description": "士兵们训练的地方。",
-        "bounds": {"min_x": 0, "min_y": 20, "max_x": 20, "max_y": 40},
-        "capacity": 15
-      },
-      {
-        "id": "outskirts",
-        "name": "城郊",
-        "type": "zone",
-        "zone_type": "outskirts",
-        "description": "安静的城郊，偶尔有流浪者经过。",
-        "bounds": {"min_x": 0, "min_y": 80, "max_x": 20, "max_y": 100},
-        "capacity": 8
-      },
-      {
-        "id": "south_market",
-        "name": "南集市",
-        "type": "zone",
-        "zone_type": "market",
-        "description": "南边的集市，热闹非凡",
-        "bounds": {"min_x": 60, "min_y": 60, "max_x": 80, "max_y": 80},
-        "capacity": 15
-      },
-      {
-        "id": "east_tavern",
-        "name": "东街酒馆",
-        "type": "zone",
-        "zone_type": "tavern",
-        "description": "东街的酒馆，老张常去",
-        "bounds": {"min_x": 80, "min_y": 20, "max_x": 100, "max_y": 40},
+        "description": "茂密的白果园森林，阳光艰难地从树冠缝隙中漏下，洒在铺满落叶的地面上。林中有鹿群和狼群的踪迹，深处藏着水鬼和孽鬼的巢穴。经验丰富的猎魔人才敢独自深入。",
+        "bounds": {
+          "min_x": 0,
+          "min_y": 0,
+          "max_x": 20,
+          "max_y": 20
+        },
         "capacity": 10
       }
     ],
-
     "items": [
-      {"id": "小麦", "name": "小麦", "type": "item", "description": "金黄的麦粒"},
-      {"id": "蔬菜", "name": "蔬菜", "type": "item", "description": "新鲜的蔬菜"},
-      {"id": "皮毛", "name": "皮毛", "type": "item", "description": "处理好的兽皮"},
-      {"id": "工具", "name": "工具", "type": "item", "description": "铁制农具或工具"},
-      {"id": "铁矿石", "name": "铁矿石", "type": "item", "description": "未冶炼的铁矿石"},
-      {"id": "米酒", "name": "米酒", "type": "item", "description": "醇香的米酒"},
-      {"id": "金币", "name": "金币", "type": "item", "description": "通用货币"},
-      {"id": "书籍", "name": "书籍", "type": "item", "description": "各种知识的书"},
-      {"id": "草药", "name": "草药", "type": "item", "description": "采集的药草"}
+      {
+        "id": "草药",
+        "name": "草药",
+        "type": "item",
+        "description": "采集的草药，是炼金术的基础原料"
+      },
+      {
+        "id": "魔药",
+        "name": "魔药",
+        "type": "item",
+        "description": "炼金术士调配的强力药水，战斗前服用能大幅提升能力"
+      },
+      {
+        "id": "矿石",
+        "name": "矿石",
+        "type": "item",
+        "description": "矮人矿坑里挖出的优质铁矿石，锻造武器的好原料"
+      },
+      {
+        "id": "武器",
+        "name": "武器",
+        "type": "item",
+        "description": "铁匠打造的刀剑和铠甲，猎魔人和佣兵的饭碗"
+      },
+      {
+        "id": "魔法饰品",
+        "name": "魔法饰品",
+        "type": "item",
+        "description": "附有微弱魔力的装饰品，贵族们喜欢收藏"
+      },
+      {
+        "id": "法术书",
+        "name": "法术书",
+        "type": "item",
+        "description": "记载着古老咒语的知识典籍，学者们梦寐以求"
+      },
+      {
+        "id": "食物",
+        "name": "食物",
+        "type": "item",
+        "description": "烤面包、炖肉和干酪，在猎魔人世界里吃饱才是硬道理"
+      },
+      {
+        "id": "酒",
+        "name": "酒",
+        "type": "item",
+        "description": "麦酒和蜂蜜酒，疲惫时来一杯能让你忘记大半天的糟心事"
+      },
+      {
+        "id": "星辉石",
+        "name": "星辉石",
+        "type": "item",
+        "description": "月光下凝结的魔力晶石，附魔和炼金的上等媒介"
+      },
+      {
+        "id": "古籍残页",
+        "name": "古籍残页",
+        "type": "item",
+        "description": "古代文献的残片，记载着已失传的知识和咒语"
+      },
+      {
+        "id": "金币",
+        "name": "金币",
+        "type": "item",
+        "description": "通用货币，红彤彤的克朗，整个北方王国都认这个"
+      }
     ],
-
     "objects": [
-      {"id": "well", "name": "水井", "type": "object", "zone": "village_square", "description": "村子里的水井"},
-      {"id": "notice_board", "name": "告示板", "type": "object", "zone": "village_square", "description": "贴满告示的木板"},
-      {"id": "market_stall", "name": "摊位", "type": "object", "zone": "market", "description": "市场里的摊位"},
-      {"id": "bar", "name": "吧台", "type": "object", "zone": "tavern", "description": "酒馆的吧台"}
+      {
+        "id": "公告栏",
+        "name": "公告栏",
+        "type": "object",
+        "zone": "white_orchard",
+        "description": "贴满委托和公告的木头栏，有几张是杰洛特贴的收怪广告"
+      },
+      {
+        "id": "壁炉",
+        "name": "壁炉",
+        "type": "object",
+        "zone": "fox_and_goose",
+        "description": "酒馆里的石砌壁炉，柴火烧得噼啪作响"
+      },
+      {
+        "id": "铁砧",
+        "name": "铁砧",
+        "type": "object",
+        "zone": "the_forge",
+        "description": "哈托里用了十几年的铁砧，表面磨得发亮"
+      },
+      {
+        "id": "研钵",
+        "name": "研钵",
+        "type": "object",
+        "zone": "alchemist_hut",
+        "description": "特莉丝用来研磨草药的石研钵，边上散落着草药碎屑"
+      },
+      {
+        "id": "水晶球",
+        "name": "水晶球",
+        "type": "object",
+        "zone": "temple_ruins",
+        "description": "叶奈法的占卜用水晶球，表面流转着微弱的蓝光"
+      },
+      {
+        "id": "篝火",
+        "name": "篝火",
+        "type": "object",
+        "zone": "kaer_morhen",
+        "description": "训练场中央的篝火堆，上面烤着一只野兔"
+      }
     ],
-
     "npc_sets": {
       "small": [
-        "老张", "田嫂", "王老板", "铁匠王", "张大娘",
-        "老陈", "赵铁柱", "陈小梅"
+        "乞丐王",
+        "特莉丝",
+        "丹德里恩",
+        "凯拉",
+        "托蜜拉",
+        "希里",
+        "哈托里",
+        "维瑟米尔",
+        "莎拉",
+        "杰洛特",
+        "卓尔坦",
+        "叶奈法"
       ],
       "default": [
-        "老张", "田嫂", "王老板", "铁匠王", "张大娘",
-        "老陈", "陈小梅", "赵铁柱", "方统领", "李夫子",
-        "林秀英", "孙大夫", "慧明", "刘猎户", "翠花", "小虎子"
+        "杰洛特",
+        "丹德里恩",
+        "希里",
+        "卓尔坦",
+        "哈托里",
+        "特莉丝",
+        "托蜜拉",
+        "莎拉",
+        "叶奈法",
+        "凯拉",
+        "乞丐王",
+        "维瑟米尔"
       ]
     },
-
     "npcs": [
       {
-        "name": "老张",
-        "role": "farmer",
-        "zone": "farm",
-        "vitality": 100,
-        "inventory": { "小麦": 15, "金币": 5 },
-        "recent_info": "家族世代务农，继承了祖上的土地。",
-        "physical": { "energy_capacity": 120, "health": 95, "recovery_speed": 0.8, "age": 28 },
-        "persona": { "work_ethic": "勤奋", "social_class": "平民", "reputation": "好", "interests": ["农作物", "牧畜"], "personality": ["内向", "耐心"] }
+        "name": "杰洛特",
+        "role": "wanderer",
+        "zone": "white_orchard",
+        "vitality": 85,
+        "satiety": 45,
+        "mood": 55,
+        "inventory": {
+          "武器": 1,
+          "金币": 8
+        },
+        "recent_info": "刚在白果园完成了一个水鬼委托，拿到了报酬。银剑需要磨一磨了，魔药也快用完了。",
+        "physical": {
+          "energy_capacity": 150,
+          "health": 95,
+          "recovery_speed": 1.5,
+          "age": 98
+        },
+        "persona": {
+          "work_ethic": "务实",
+          "social_class": "猎魔人",
+          "reputation": "神秘",
+          "interests": [
+            "猎魔",
+            "昆特牌",
+            "独处"
+          ],
+          "personality": [
+            "冷静",
+            "寡言",
+            "敏锐"
+          ],
+          "special_traits": [
+            "突变者"
+          ]
+        }
       },
       {
-        "name": "田嫂",
-        "role": "farmer",
-        "zone": "farm",
-        "vitality": 100,
-        "inventory": { "蔬菜": 10, "金币": 3 },
-        "recent_info": "嫁到本村后和丈夫一起务农，还养了些鸡鸭。",
-        "physical": { "energy_capacity": 100, "health": 90, "recovery_speed": 0.7, "age": 26 },
-        "persona": { "work_ethic": "勤奋", "social_class": "平民", "reputation": "好", "interests": ["蔬菜", "家禽", "孩子"], "personality": ["温和", "热情"] }
-      },
-      {
-        "name": "王老板",
+        "name": "丹德里恩",
         "role": "merchant",
-        "zone": "market",
-        "vitality": 100,
-        "inventory": { "金币": 10, "货物": 5 },
-        "recent_info": "在市场摆摊多年，积累了丰富的商业经验。",
-        "physical": { "energy_capacity": 100, "health": 90, "recovery_speed": 1.0, "age": 35 },
-        "persona": { "work_ethic": "勤奋", "social_class": "商人", "reputation": "普通", "interests": ["金币", "货物"], "personality": ["谨慎", "外向"] }
+        "zone": "fox_and_goose",
+        "vitality": 80,
+        "satiety": 60,
+        "mood": 75,
+        "inventory": {
+          "金币": 20
+        },
+        "recent_info": "刚在酒馆唱了一首叙事诗，听众赏了几个铜板。听说附近有有趣的事，想打听打听写进新歌里。",
+        "physical": {
+          "energy_capacity": 90,
+          "health": 85,
+          "recovery_speed": 1.0,
+          "age": 42
+        },
+        "persona": {
+          "work_ethic": "散漫",
+          "social_class": "吟游诗人",
+          "reputation": "好",
+          "interests": [
+            "唱歌",
+            "女人",
+            "金币"
+          ],
+          "personality": [
+            "外向",
+            "浮夸",
+            "热心"
+          ],
+          "special_traits": [
+            "好色"
+          ]
+        }
       },
       {
-        "name": "铁匠王",
-        "role": "artisan",
-        "zone": "market",
-        "vitality": 100,
-        "inventory": { "铁锭": 15, "金币": 10 },
-        "recent_info": "祖传铁匠，手艺全村一流。",
-        "physical": { "energy_capacity": 130, "health": 95, "recovery_speed": 0.9, "age": 38 },
-        "persona": { "work_ethic": "刻苦", "social_class": "工匠", "reputation": "好", "interests": ["打铁", "锻造", "工具"], "personality": ["沉默", "专注"] }
+        "name": "希里",
+        "role": "wanderer",
+        "zone": "kaer_morhen",
+        "vitality": 70,
+        "satiety": 35,
+        "mood": 50,
+        "inventory": {
+          "金币": 10
+        },
+        "recent_info": "在凯尔莫罕外面训练了一整个早上，剑术长进不少。肚子饿得咕咕叫，维瑟米尔说先练完才能吃东西。",
+        "physical": {
+          "energy_capacity": 130,
+          "health": 90,
+          "recovery_speed": 1.8,
+          "age": 20
+        },
+        "persona": {
+          "work_ethic": "坚韧",
+          "social_class": "血脉",
+          "reputation": "未知",
+          "interests": [
+            "剑术",
+            "冒险",
+            "自由"
+          ],
+          "personality": [
+            "倔强",
+            "勇敢",
+            "急躁"
+          ],
+          "special_traits": [
+            "上古之血"
+          ]
+        }
       },
       {
-        "name": "张大娘",
+        "name": "卓尔坦",
         "role": "merchant",
-        "zone": "market",
+        "zone": "market_square",
         "vitality": 100,
-        "inventory": { "面包": 15, "金币": 8 },
-        "recent_info": "在市场摆面包摊二十年，老街坊都认识她。",
-        "physical": { "energy_capacity": 90, "health": 85, "recovery_speed": 0.9, "age": 45 },
-        "persona": { "work_ethic": "勤劳", "social_class": "平民", "reputation": "好", "interests": ["面包", "顾客"], "personality": ["热情", "爱聊天"] }
-      },
-      {
-        "name": "老陈",
-        "role": "merchant",
-        "zone": "tavern",
-        "vitality": 100,
-        "inventory": { "酒": 20, "金币": 30 },
-        "recent_info": "经营这家酒馆二十年，认识全村所有人。",
-        "physical": { "energy_capacity": 100, "health": 95, "recovery_speed": 1.0, "age": 50 },
-        "persona": { "work_ethic": "勤快", "social_class": "商人", "reputation": "好", "interests": ["酿酒", "待客", "听八卦"], "personality": ["热情", "好客"] }
-      },
-      {
-        "name": "赵铁柱",
-        "role": "guard",
-        "zone": "barracks",
-        "vitality": 90,
-        "satiety": 40,
+        "satiety": 55,
         "mood": 60,
-        "inventory": { "金币": 15 },
-        "recent_info": "刚轮值完有些饿，想去集市买点吃的。",
-        "physical": { "energy_capacity": 130, "health": 100, "recovery_speed": 1.2, "age": 28 },
-        "persona": { "work_ethic": "忠诚", "social_class": "平民", "reputation": "好", "interests": ["巡逻", "吃肉", "喝酒"], "personality": ["外向", "直爽"] }
+        "inventory": {
+          "矿石": 8,
+          "金币": 15
+        },
+        "recent_info": "矮人商人的直觉告诉他，战争结束后的矿石一定能卖个好价钱。在集市场摆了个摊，等着哈托里或别的铁匠来进货。",
+        "physical": {
+          "energy_capacity": 120,
+          "health": 95,
+          "recovery_speed": 1.2,
+          "age": 120
+        },
+        "persona": {
+          "work_ethic": "勤劳",
+          "social_class": "商人",
+          "reputation": "好",
+          "interests": [
+            "金币",
+            "矿石",
+            "烈酒"
+          ],
+          "personality": [
+            "豪爽",
+            "精明",
+            "直率"
+          ],
+          "special_traits": [
+            "矮人"
+          ]
+        }
       },
       {
-        "name": "陈小梅",
-        "role": "wanderer",
-        "zone": "village_square",
-        "vitality": 60,
-        "satiety": 20,
-        "mood": 40,
-        "inventory": { "金币": 10 },
-        "recent_info": "走了大半天肚子很饿，想找个地方买些吃的补充体力。",
-        "physical": { "energy_capacity": 100, "health": 80, "recovery_speed": 1.0, "age": 22 },
-        "persona": { "work_ethic": "随性", "social_class": "平民", "reputation": "陌生", "interests": ["风景", "美食", "见闻"], "personality": ["好奇", "随和"] }
+        "name": "哈托里",
+        "role": "artisan",
+        "zone": "the_forge",
+        "vitality": 95,
+        "satiety": 50,
+        "mood": 55,
+        "inventory": {
+          "武器": 2,
+          "金币": 5
+        },
+        "recent_info": "战争期间打造的武器积压了不少库存，现在需要好矿石来锻造新的装备。老主顾们的订单已经排到下周了。",
+        "physical": {
+          "energy_capacity": 130,
+          "health": 90,
+          "recovery_speed": 0.9,
+          "age": 45
+        },
+        "persona": {
+          "work_ethic": "刻苦",
+          "social_class": "工匠",
+          "reputation": "好",
+          "interests": [
+            "锻造",
+            "矿石",
+            "武器"
+          ],
+          "personality": [
+            "沉默",
+            "专注",
+            "老实"
+          ]
+        }
       },
       {
-        "name": "方统领",
+        "name": "特莉丝",
+        "role": "healer",
+        "zone": "alchemist_hut",
+        "vitality": 85,
+        "satiety": 50,
+        "mood": 60,
+        "inventory": {
+          "魔药": 5,
+          "金币": 8
+        },
+        "recent_info": "在炼金小屋里忙着调配新的魔药。草药快用完了，需要托蜜拉或维瑟米尔送新的来。前线退下来的伤兵还需要更多药水。",
+        "physical": {
+          "energy_capacity": 90,
+          "health": 90,
+          "recovery_speed": 1.2,
+          "age": 35
+        },
+        "persona": {
+          "work_ethic": "认真",
+          "social_class": "术士",
+          "reputation": "好",
+          "interests": [
+            "炼金术",
+            "医术",
+            "帮助他人"
+          ],
+          "personality": [
+            "温柔",
+            "坚定",
+            "细心"
+          ],
+          "special_traits": [
+            "术士"
+          ]
+        }
+      },
+      {
+        "name": "托蜜拉",
+        "role": "farmer",
+        "zone": "herb_garden",
+        "vitality": 90,
+        "satiety": 55,
+        "mood": 65,
+        "inventory": {
+          "草药": 15,
+          "金币": 3
+        },
+        "recent_info": "草药的收成不错，院子里晾满了药草。特莉丝那边一直在进草药，托蜜拉盘算着下次能卖个好价钱。",
+        "physical": {
+          "energy_capacity": 100,
+          "health": 90,
+          "recovery_speed": 0.8,
+          "age": 38
+        },
+        "persona": {
+          "work_ethic": "勤劳",
+          "social_class": "平民",
+          "reputation": "好",
+          "interests": [
+            "草药",
+            "园艺",
+            "猫"
+          ],
+          "personality": [
+            "温和",
+            "耐心",
+            "纯朴"
+          ]
+        }
+      },
+      {
+        "name": "莎拉",
+        "role": "merchant",
+        "zone": "fox_and_goose",
+        "vitality": 100,
+        "satiety": 65,
+        "mood": 70,
+        "inventory": {
+          "食物": 15,
+          "酒": 8,
+          "金币": 5
+        },
+        "recent_info": "狐狸与鹅酒馆今天的生意还不错。炉子上炖着肉汤，面包刚出炉。她琢磨着要不要去托蜜拉那儿买点草药调味。",
+        "physical": {
+          "energy_capacity": 100,
+          "health": 95,
+          "recovery_speed": 1.0,
+          "age": 48
+        },
+        "persona": {
+          "work_ethic": "勤快",
+          "social_class": "平民",
+          "reputation": "好",
+          "interests": [
+            "做饭",
+            "酿酒",
+            "打听消息"
+          ],
+          "personality": [
+            "热情",
+            "精明",
+            "嗓门大"
+          ]
+        }
+      },
+      {
+        "name": "叶奈法",
+        "role": "farmer",
+        "zone": "temple_ruins",
+        "vitality": 80,
+        "satiety": 50,
+        "mood": 70,
+        "inventory": {
+          "魔法饰品": 5,
+          "金币": 30
+        },
+        "recent_info": "在旧神殿区整理占卜用具。虽然战争结束了，但魔力流动依然紊乱。她有几件多余的魔法饰品，想找个识货的买主。",
+        "physical": {
+          "energy_capacity": 90,
+          "health": 85,
+          "recovery_speed": 1.3,
+          "age": 94
+        },
+        "persona": {
+          "work_ethic": "精干",
+          "social_class": "术士",
+          "reputation": "敬畏",
+          "interests": [
+            "魔法",
+            "占卜",
+            "控制"
+          ],
+          "personality": [
+            "高傲",
+            "睿智",
+            "不怒自威"
+          ],
+          "special_traits": [
+            "术士"
+          ]
+        }
+      },
+      {
+        "name": "凯拉",
+        "role": "scholar",
+        "zone": "oxenfurt",
+        "vitality": 75,
+        "satiety": 50,
+        "mood": 65,
+        "inventory": {
+          "法术书": 4,
+          "金币": 12
+        },
+        "recent_info": "在奥森弗特的临时书房里翻阅古籍。她在研究一种上古咒语的变体，需要更多卷轴和数据来验证理论。",
+        "physical": {
+          "energy_capacity": 80,
+          "health": 85,
+          "recovery_speed": 1.0,
+          "age": 32
+        },
+        "persona": {
+          "work_ethic": "勤奋",
+          "social_class": "学者",
+          "reputation": "普通",
+          "interests": [
+            "古咒语",
+            "知识",
+            "探索"
+          ],
+          "personality": [
+            "好奇",
+            "健谈",
+            "容易分心"
+          ]
+        }
+      },
+      {
+        "name": "乞丐王",
         "role": "guard",
-        "zone": "barracks",
-        "vitality": 100,
-        "inventory": { "武器": 5, "金币": 20 },
-        "recent_info": "曾率队击退山贼，保卫了村庄。",
-        "physical": { "energy_capacity": 140, "health": 100, "recovery_speed": 1.0, "age": 42 },
-        "persona": { "work_ethic": "纪律", "social_class": "军官", "reputation": "敬畏", "interests": ["训练", "武器", "阅兵"], "personality": ["严厉", "公正"], "special_traits": ["老兵"] }
+        "zone": "harbor",
+        "vitality": 90,
+        "satiety": 60,
+        "mood": 65,
+        "inventory": {
+          "古籍残页": 3,
+          "金币": 25
+        },
+        "recent_info": "港口的消息最灵通。战争结束后的走私生意更不好做了，但总有人愿意为情报付钱。他手里有几页古籍残片，或许能卖给识货的人。",
+        "physical": {
+          "energy_capacity": 110,
+          "health": 90,
+          "recovery_speed": 1.2,
+          "age": 52
+        },
+        "persona": {
+          "work_ethic": "机灵",
+          "social_class": "地下",
+          "reputation": "复杂",
+          "interests": [
+            "情报",
+            "金币",
+            "控制"
+          ],
+          "personality": [
+            "精明",
+            "阴险",
+            "守信用"
+          ],
+          "special_traits": [
+            "独眼"
+          ]
+        }
       },
       {
-        "name": "李夫子",
-        "role": "scholar",
-        "zone": "library",
-        "vitality": 100,
-        "inventory": { "书籍": 5, "金币": 15 },
-        "recent_info": "在王国图书馆任职多年，研究古代历史。",
-        "physical": { "energy_capacity": 80, "health": 80, "recovery_speed": 0.7, "age": 40 },
-        "persona": { "work_ethic": "勤奋", "social_class": "学者", "reputation": "好", "interests": ["书籍", "历史", "星象"], "personality": ["内向", "好奇"], "special_traits": ["夜猫子"] }
-      },
-      {
-        "name": "林秀英",
-        "role": "scholar",
-        "zone": "library",
-        "vitality": 100,
-        "inventory": { "书籍": 8, "金币": 5 },
-        "recent_info": "把图书馆管理得井井有条，知道每本书的位置。",
-        "physical": { "energy_capacity": 75, "health": 85, "recovery_speed": 0.6, "age": 30 },
-        "persona": { "work_ethic": "认真", "social_class": "学者", "reputation": "好", "interests": ["藏书", "整理", "园艺"], "personality": ["安静", "细致"] }
-      },
-      {
-        "name": "孙大夫",
-        "role": "healer",
-        "zone": "temple",
-        "vitality": 100,
-        "inventory": { "药水": 8, "金币": 12 },
-        "recent_info": "在神庙学习医术多年，治愈了无数病患。",
-        "physical": { "energy_capacity": 85, "health": 85, "recovery_speed": 1.3, "age": 45 },
-        "persona": { "work_ethic": "仁慈", "social_class": "平民", "reputation": "好", "interests": ["草药", "医术", "阅读"], "personality": ["内向", "温和"] }
-      },
-      {
-        "name": "慧明",
-        "role": "healer",
-        "zone": "temple",
-        "vitality": 100,
-        "inventory": { "佛经": 3, "金币": 5 },
-        "recent_info": "在村中寺庙修行三十年，深得村民敬重。",
-        "physical": { "energy_capacity": 90, "health": 95, "recovery_speed": 1.5, "age": 55 },
-        "persona": { "work_ethic": "禅定", "social_class": "僧人", "reputation": "敬重", "interests": ["修行", "佛法", "化缘"], "personality": ["平和", "寡言"], "special_traits": ["素食"] }
-      },
-      {
-        "name": "刘猎户",
-        "role": "wanderer",
-        "zone": "forest",
-        "vitality": 100,
-        "inventory": { "皮毛": 5, "金币": 3 },
-        "recent_info": "在森林里打猎十余年，熟知每一片区域。",
-        "physical": { "energy_capacity": 120, "health": 100, "recovery_speed": 1.2, "age": 32 },
-        "persona": { "work_ethic": "坚韧", "social_class": "平民", "reputation": "普通", "interests": ["打猎", "山林", "皮货"], "personality": ["独立", "警觉"] }
-      },
-      {
-        "name": "翠花",
-        "role": "healer",
-        "zone": "forest",
-        "vitality": 100,
-        "inventory": { "草药": 12, "金币": 2 },
-        "recent_info": "从小在山里长大，认识上百种草药。",
-        "physical": { "energy_capacity": 110, "health": 90, "recovery_speed": 1.0, "age": 22 },
-        "persona": { "work_ethic": "勤奋", "social_class": "平民", "reputation": "好", "interests": ["草药", "山林", "动物"], "personality": ["活泼", "勇敢"] }
-      },
-      {
-        "name": "小虎子",
-        "role": "wanderer",
-        "zone": "village_square",
-        "vitality": 100,
-        "inventory": { "纸张": 5, "金币": 1 },
-        "recent_info": "帮村里人跑腿送信挣几个铜板。",
-        "physical": { "energy_capacity": 150, "health": 100, "recovery_speed": 2.0, "age": 14 },
-        "persona": { "work_ethic": "机灵", "social_class": "平民", "reputation": "普通", "interests": ["跑腿", "零食", "看热闹"], "personality": ["活泼", "好奇"], "special_traits": ["话多"] }
+        "name": "维瑟米尔",
+        "role": "farmer",
+        "zone": "kaer_morhen",
+        "vitality": 85,
+        "satiety": 50,
+        "mood": 70,
+        "inventory": {
+          "草药": 10,
+          "金币": 6
+        },
+        "recent_info": "在凯尔莫罕外围的山坡上采了不少蓍草和鼠尾草。希里的训练进度让人欣慰。这些草药可以卖给特莉丝换几个金币。",
+        "physical": {
+          "energy_capacity": 110,
+          "health": 90,
+          "recovery_speed": 1.2,
+          "age": 200
+        },
+        "persona": {
+          "work_ethic": "尽责",
+          "social_class": "猎魔人",
+          "reputation": "敬重",
+          "interests": [
+            "训练",
+            "草药",
+            "猎魔"
+          ],
+          "personality": [
+            "沉稳",
+            "风趣",
+            "经验丰富"
+          ],
+          "special_traits": [
+            "狼学派"
+          ]
+        }
       }
     ]
   },
-
   "label_mappings": {
-    "comment": "实体名称 → 拓扑标签（稳定映射，不改标签名则全量依赖不变）",
+    "comment": "实体名称 → 拓扑标签（稳定映射）",
     "labels": [
-      {"name": "王老板",   "label": "A"},
-      {"name": "南集市",   "label": "B"},
-      {"name": "蔬菜",     "label": "C"},
-      {"name": "张大娘",   "label": "D"},
-      {"name": "铁匠王",   "label": "E"},
-      {"name": "铁锭",     "label": "F"},
-      {"name": "小麦",     "label": "G"},
-      {"name": "老张",     "label": "H"},
-      {"name": "田嫂",     "label": "I"},
-      {"name": "金币",     "label": "J"},
-      {"name": "面包",     "label": "K"},
-      {"name": "酒",       "label": "L"},
-      {"name": "货物",     "label": "M"},
-      {"name": "老陈",     "label": "N"},
-      {"name": "武器",     "label": "O"},
-      {"name": "农具",     "label": "P"},
-      {"name": "铁匠铺",   "label": "Q"},
-      {"name": "赵铁柱",   "label": "R"},
-      {"name": "陈小梅",   "label": "S"}
+      {
+        "name": "杰洛特",
+        "label": "A"
+      },
+      {
+        "name": "丹德里恩",
+        "label": "B"
+      },
+      {
+        "name": "希里",
+        "label": "C"
+      },
+      {
+        "name": "卓尔坦",
+        "label": "D"
+      },
+      {
+        "name": "哈托里",
+        "label": "E"
+      },
+      {
+        "name": "特莉丝",
+        "label": "F"
+      },
+      {
+        "name": "托蜜拉",
+        "label": "G"
+      },
+      {
+        "name": "莎拉",
+        "label": "H"
+      },
+      {
+        "name": "叶奈法",
+        "label": "I"
+      },
+      {
+        "name": "凯拉",
+        "label": "J"
+      },
+      {
+        "name": "乞丐王",
+        "label": "K"
+      },
+      {
+        "name": "维瑟米尔",
+        "label": "L"
+      },
+      {
+        "name": "草药",
+        "label": "M"
+      },
+      {
+        "name": "魔药",
+        "label": "N"
+      },
+      {
+        "name": "矿石",
+        "label": "O"
+      },
+      {
+        "name": "武器",
+        "label": "P"
+      },
+      {
+        "name": "魔法饰品",
+        "label": "Q"
+      },
+      {
+        "name": "法术书",
+        "label": "R"
+      },
+      {
+        "name": "食物",
+        "label": "S"
+      },
+      {
+        "name": "酒",
+        "label": "T"
+      },
+      {
+        "name": "星辉石",
+        "label": "U"
+      },
+      {
+        "name": "古籍残页",
+        "label": "V"
+      },
+      {
+        "name": "金币",
+        "label": "W"
+      },
+      {
+        "name": "白果园",
+        "label": "X"
+      },
+      {
+        "name": "集市场",
+        "label": "Y"
+      },
+      {
+        "name": "狐狸与鹅酒馆",
+        "label": "Z"
+      }
     ]
   }
 }

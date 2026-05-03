@@ -249,6 +249,10 @@ class InteractionResolver:
 
     # ─── API 调用 ───
 
+    def call_llm(self, prompt: str) -> str:
+        """公开的 LLM 调用入口，供外部层使用。"""
+        return self._call_llm(prompt)
+
     def _call_llm(self, prompt: str) -> str:
         if self.provider == "minimax":
             return self._call_minimax(prompt)
