@@ -199,7 +199,7 @@
           "novigrad",
           "kaer_morhen"
         ],
-        "description": "泰莫利亚北境的小村庄，战争留下的弹坑长出了野花。"
+        "description": "泰莫利亚北境的小村庄，战争留下的弹坑长出了野花。这里有农田和草药园，村民在田间劳作，养蜂采药，是购买食物和草药补给的好去处。"
       },
       {
         "id": "fox_and_goose",
@@ -209,7 +209,7 @@
         "connects_to": [
           "white_orchard"
         ],
-        "description": "白果园最热闹的酒馆。"
+        "description": "白果园最热闹的酒馆，既是旅人歇脚过夜的地方，也有烤肉和麦酒供应。可以在这里休息恢复体力、吃东西补充饱腹，或打探消息。"
       },
       {
         "id": "novigrad",
@@ -222,7 +222,7 @@
           "vizima",
           "skellige"
         ],
-        "description": "北方最大的自由城邦，港口繁忙，商贾云集。"
+        "description": "北方最大的自由城邦——集市、港口、交易所俱全，商贾云集，是买卖各种货物、进行商贸交易的商贸中心。锻造坊和裁缝铺也集中于此。"
       },
       {
         "id": "oxenfurt",
@@ -232,7 +232,7 @@
         "connects_to": [
           "novigrad"
         ],
-        "description": "北方最古老的大学城。"
+        "description": "北方最古老的大学城，图书馆藏书万卷，学者聚集在此研究炼金术和魔法。可以学到炼金配方、制作魔药，或寻找法术书和魔法材料。"
       },
       {
         "id": "kaer_morhen",
@@ -242,7 +242,7 @@
         "connects_to": [
           "white_orchard"
         ],
-        "description": "群山之中的猎魔人要塞。"
+        "description": "群山之中的猎魔人要塞，有训练场、武器工坊和草药仓库。适合修理装备、训练战斗技能、储存物资或制作猎魔人专属药剂。"
       },
       {
         "id": "vizima",
@@ -252,7 +252,7 @@
         "connects_to": [
           "novigrad"
         ],
-        "description": "泰莫利亚王国的首都。"
+        "description": "泰莫利亚王国的首都，神殿岛上的永恒之火神庙庄严矗立。贵族在此交易魔法饰品和珍稀物品，是购买高品质装备和奢侈品的好地方。"
       },
       {
         "id": "skellige",
@@ -262,7 +262,7 @@
         "connects_to": [
           "novigrad"
         ],
-        "description": "北海群岛的港口。"
+        "description": "北海群岛的港口，渔船和商船往来频繁。鱼类和海产品丰富，也是船舶修理、跨海贸易的集散地。"
       }
     ],
     "items": [

@@ -69,6 +69,10 @@ def zone_to_entity(config: Any) -> Entity:
     ent.desc = getattr(config, "desc", "")
     ent.attributes["capacity"] = float(getattr(config, "capacity", 100))
     ent.attributes["is_safe"] = float(getattr(config, "is_safe", True))
+    # 显式存储 zone_type，供 prompt 渲染时展示区域功能类型
+    zt = getattr(config, "zone_type", "")
+    if zt:
+        ent.attributes["zone_type"] = zt
     return ent
 
 

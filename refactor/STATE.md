@@ -1,21 +1,32 @@
-# State: Step 1/6 ✅ 完成 — prompt 模板抽取
+# State: Step 2/6 ⏳ 进行中 — intent_executor + LLM #4a → adapter
 
-## 输出产物
-- ✅ `src/agent_world/domain/npc_world/adapter.py` — NPCWorldAdapter 薄壳
-  - 继承 `domain/adapter.py` 的 DomainAdapter 抽象接口
-  - 内容层委托旧 `services/domain_adapter.DomainAdapter`
-  - 回退本地 handler: `_slot_available_recipes()`, `_slot_entity_constraints()`
-- ✅ `src/agent_world/domain/npc_world/__init__.py`
-- ✅ `prompt_assembler.py`: llm1_plan 模板新增 entity_constraints slot
-- ✅ `graph_npc_engine.py`: 改用 NPCWorldAdapter + assemble() 替换 build_one_npc_prompt()
+## 前一步输出
+- prompt_assembler slot 系统已就绪 (LLM #1 + #3)
+- NPCWorldAdapter 薄壳已创建
+- commit: 6a64113 / b9b3d34, tag: refactor/step-1-done
 
-## 验证
-- ✅ 跑 run_1tick step1-verify：697.9s，完整通过
-- ✅ LLM #1: 12/12 计划生成
-- ✅ LLM #2: 0 拓扑操作（正确）
-- ✅ LLM #3: 7 个故事
-- ✅ LLM #4a: 0 ops（已知 bug: 市场节点不存在）
-- ✅ LLM #4b: 21 attr, 14 recent_info
-- ✅ LLM #5: 校验通过
+## 本轮任务
 
-Tag: refactor/step-1-done
+拆为 3 个子步骤：
+
+### 2a — Zone 描述扩充 + zone_type 显式化（先配置后验证）
+- 改写 node_config.json 中 7 个 zone 的 description，每句加功能关键词
+- 在 global_overview slot 中展示 zone_type
+- 跑 tick → 看 LLM #4a 能否自行将"市场"匹配到诺维格瑞
+
+### 2b — LLM #2 prompt 移入 slot 系统
+- intent_executor.py: _build_prompt() → 走 assemble("llm2_structure", ...)
+- _build_combined_prompt() → 改为 slot 驱动的 NPC block
+- _parse_ops() → adapter.parse_llm_output(stage=2)
+- 跑 tick → 验证 LLM #2 输出一致
+
+### 2c — LLM #4a + 校验移入 adapter
+- PostProcessor.resolve_topology_changes() 走 assemble("llm4a_topo", ...)
+- _parse_4a_ops() → adapter.parse_llm_output(stage=4)
+- ConservationValidator → adapter.validate_ops()
+- 跑 tick → 完整回归
+
+## 全局配置（不变）
+- DomainAdapter 接口签名
+- GraphEngine 纯图论层
+- DB 存储层

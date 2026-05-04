@@ -150,13 +150,19 @@ def _render_topo_slot(slot_name: str, engine, **kw) -> str:
             if global_label_map is not None and not has_role(ent.type_id, "region"):
                 continue
             name = ent.name if hasattr(ent, 'name') else eid[:12]
+            # 展示 zone_type（帮助 LLM 理解区域功能）
+            zt = ent.attributes.get("zone_type", "") if hasattr(ent, 'attributes') else ""
+            if zt:
+                type_hint = f" ({zt})"
+            else:
+                type_hint = ""
             conns = []
             for conn_eid in ent.connected_entity_ids:
                 conn_tag = eid_to_tag.get(conn_eid)
                 if conn_tag:
                     conns.append(f"{{{conn_tag}}}")
             conn_str = " ↔ " + ", ".join(sorted(conns)) if conns else ""
-            lines.append(f"  {{{tag}}} = {name}{conn_str}")
+            lines.append(f"  {{{tag}}} = {name}{type_hint}{conn_str}")
         lines.append("")
         lines.append("规则：")
         if global_label_map is not None:
