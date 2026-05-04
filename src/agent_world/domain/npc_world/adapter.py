@@ -1,12 +1,13 @@
 """
 NPCWorldAdapter — NPC/Agent 世界的域适配器实现。
 
-实现 DomainAdapter 新通用接口。
+实现 DomainAdapter 新通用接口。所有世界观特定文本从 domain.json 加载。
 桥接方法确保 Step 1-2 的旧调用者无感。
 """
 from __future__ import annotations
 import json
 import logging
+import os
 import re
 from typing import Any, Optional
 
@@ -21,24 +22,45 @@ from ..adapter import (
     SlotDef,
     StateChange,
 )
-from ...services.domain_adapter import DomainAdapter as OldDomainAdapter
 
 logger = logging.getLogger("NPCWorldAdapter")
+
+_DOMAIN_PATH = os.path.join(os.path.dirname(__file__), "../../config/domain.json")
+
+
+def _has_role(tid: str, role: str) -> bool:
+    from ...config.config_loader import has_role
+    return has_role(tid, role)
+
+
+def _get_zone_name(entity, ge) -> str:
+    """获取实体所在区域名称。"""
+    if ge:
+        for conn in entity.connected_entity_ids:
+            e = ge.get_entity(conn)
+            if e and _has_role(e.type_id, "region"):
+                return e.name
+    for conn in entity.connected_entity_ids:
+        if conn.startswith("zone_"):
+            return conn.replace("zone_", "")
+    return "?"
 
 
 class NPCWorldAdapter(DomainAdapter):
     """NPC/Agent 世界域适配器"""
 
     def __init__(self, domain_path: str | None = None):
-        self._old_adapter = OldDomainAdapter(domain_path=domain_path)
+        path = domain_path or _DOMAIN_PATH
+        with open(path, "r", encoding="utf-8") as f:
+            self._data = json.load(f)
+        self._adapter_data = self._data.get("adapter", {})
         self._ge = None
 
     def set_graph_engine(self, ge):
-        self._old_adapter.set_graph_engine(ge)
         self._ge = ge
 
     def get_graph_engine(self):
-        return self._ge or getattr(self._old_adapter, '_ge', None)
+        return self._ge
 
     # ═══════════════════════════════════════════════
     # 新通用接口
@@ -49,20 +71,19 @@ class NPCWorldAdapter(DomainAdapter):
         return "npc_world"
 
     def classify_node(self, entity_id: str, graph) -> NodeClassification:
-        from ...config.config_loader import has_role
         ent = graph.get_entity(entity_id)
         if not ent or not hasattr(ent, 'type_id'):
             return NodeClassification()
         tid = ent.type_id
         return NodeClassification(
-            is_actor=has_role(tid, "actor"),
-            is_container=has_role(tid, "actor") or has_role(tid, "region"),
-            is_consumable=has_role(tid, "thing"),
-            is_location=has_role(tid, "region"),
+            is_actor=_has_role(tid, "actor"),
+            is_container=_has_role(tid, "actor") or _has_role(tid, "region"),
+            is_consumable=_has_role(tid, "thing"),
+            is_location=_has_role(tid, "region"),
         )
 
     def describe_node(self, entity_id: str, graph) -> NodeDescriptor:
-        ent = graph.get_entity(entity_id)
+        ent = graph.get_entity(entity_id) if graph else None
         if not ent:
             return NodeDescriptor(display_name=entity_id, type_label="?")
         return NodeDescriptor(
@@ -74,13 +95,39 @@ class NPCWorldAdapter(DomainAdapter):
         )
 
     def get_config(self, key: str, default=None) -> Any:
-        config = {
-            "zones": self._old_adapter.get_zones(),
-            "recipes": self._old_adapter.get_recipes(),
-            "initial_zones": self._old_adapter.get_npc_initial_zones(),
-            "entity_names": self._old_adapter.get_all_entity_names(),
-        }
-        return config.get(key, default)
+        if key == "zones":
+            return self._data.get("zones", [])
+        if key == "recipes":
+            return self._data.get("recipes", [])
+        if key == "initial_zones":
+            return self._data.get("npc_initial_zones", {})
+        if key == "entity_names":
+            return self._get_all_entity_names()
+        return default
+
+    def _get_all_entity_names(self) -> set[str]:
+        names = set()
+        names.update(self._data.get("npc_initial_zones", {}).keys())
+        from ...config.config_loader import get_zones, get_items, get_all_npc_defs
+        for z in get_zones():
+            n = z.get("name", "")
+            if n:
+                names.add(n)
+        for item in get_items():
+            n = item.get("name", "")
+            if n:
+                names.add(n)
+        for npc in get_all_npc_defs():
+            n = npc.get("name", "")
+            if n:
+                names.add(n)
+        for r in self._data.get("recipes", []):
+            p = r.get("produces", "")
+            if p:
+                names.add(p)
+            for c in r.get("consumes", {}):
+                names.add(c)
+        return names
 
     def get_pipeline_stages(self) -> list[PipelineStage]:
         return [
@@ -196,7 +243,6 @@ class NPCWorldAdapter(DomainAdapter):
             if tgt and tgt not in all_ids:
                 logger.warning(f"[entity_existence] 移除: tgt={tgt} 不存在")
                 continue
-            # system_delta 的 item 字段
             item = op.get("item", "")
             if item and item not in all_ids:
                 logger.warning(f"[entity_existence] 移除: item={item} 不存在")
@@ -205,11 +251,23 @@ class NPCWorldAdapter(DomainAdapter):
         return filtered
 
     # ═══════════════════════════════════════════════
-    # 旧接口（桥接 + 额外方法）
+    # 旧接口（桥接）
     # ═══════════════════════════════════════════════
 
     def get_node_descriptor(self, entity_id: str, graph) -> NodeDescriptor:
         return self.describe_node(entity_id, graph)
+
+    def get_zones(self) -> list[dict]:
+        return self._data.get("zones", [])
+
+    def get_recipes(self) -> list[dict]:
+        return self._data.get("recipes", [])
+
+    def get_npc_initial_zones(self) -> dict[str, str]:
+        return self._data.get("npc_initial_zones", {})
+
+    def get_all_entity_names(self) -> set[str]:
+        return self._get_all_entity_names()
 
     def build_prompt(
         self,
@@ -227,7 +285,7 @@ class NPCWorldAdapter(DomainAdapter):
 
     def _build_template(self, tmpl_name: str, graph, label_map, **kw) -> str:
         from ...services.prompt_assembler import assemble
-        kw.pop('engine', None)  # 避免与显式 engine=graph 冲突
+        kw.pop('engine', None)
         return assemble(
             tmpl_name, self, engine=graph or self.get_graph_engine(),
             label_map=label_map, **kw
@@ -251,11 +309,9 @@ class NPCWorldAdapter(DomainAdapter):
         return []
 
     def _parse_llm1_plans(self, raw: str) -> list[GraphOp]:
-        """LLM #1 计划输出解析（仅作记录用，非结构操作）"""
         return []
 
     def _parse_llm5_output(self, raw: str, graph) -> list[GraphOp]:
-        """LLM #4b 内容层输出解析（暂用旧逻辑）"""
         return []
 
     def validate_ops(
@@ -306,18 +362,257 @@ class NPCWorldAdapter(DomainAdapter):
     ) -> list[StateChange]:
         return []
 
-    # ── 旧 Slot 渲染（委托给旧 adapter + 本地 handler）──
+    # ═══════════════════════════════════════════════
+    # render_slot — 所有 slot 方法的统一入口
+    # ═══════════════════════════════════════════════
 
     def render_slot(self, slot_name: str, engine=None, **kw) -> str:
         if engine and 'engine' not in kw:
             kw = dict(kw, engine=engine)
-        result = self._old_adapter.render_slot(slot_name, **kw)
-        if result:
-            return result
+        method_name = f"slot_{slot_name}"
+        handler = getattr(self, method_name, None)
+        if handler is not None:
+            return handler(**kw)
         local_handler = getattr(self, f'_slot_{slot_name}', None)
         if local_handler:
             return local_handler(**kw)
+        return self._adapter_data.get(slot_name, "")
+
+    # ── 类别 B：按调用者区分的文本 ──
+
+    def slot_system_role(self, **kw) -> str:
+        caller = kw.get("_caller", "")
+        roles = self._adapter_data.get("system_role", {})
+        return roles.get(caller, "")
+
+    def slot_output_instructions(self, **kw) -> str:
+        caller = kw.get("_caller", "")
+        inst = self._adapter_data.get("output_instructions", {})
+        return inst.get(caller, "")
+
+    def slot_output_format(self, **kw) -> str:
+        caller = kw.get("_caller", "")
+        fmt = self._adapter_data.get("output_format", {})
+        return fmt.get(caller, "")
+
+    # ── 类别 C：模板文本 + 运行时数据 ──
+
+    def slot_survival_needs(self, **kw) -> str:
+        entity = kw.get("entity")
+        if not entity:
+            return ""
+        v = entity.attributes.get("vitality", 100)
+        s = entity.attributes.get("satiety", 50)
+        m = entity.attributes.get("mood", 50)
+        template = self._adapter_data.get("survival_needs", "")
+        return template.format(v=v, s=s, m=m)
+
+    def slot_entity_identity(self, **kw) -> str:
+        entity = kw.get("entity")
+        if not entity:
+            return ""
+        v = entity.attributes.get("vitality", 100)
+        s = entity.attributes.get("satiety", 50)
+        m = entity.attributes.get("mood", 50)
+        zone = _get_zone_name(entity, kw.get("engine"))
+        template = self._adapter_data.get("entity_identity", "")
+        return template.format(name=entity.name, role=entity.role or "?", zone=zone, v=v, s=s, m=m)
+
+    def slot_personality(self, **kw) -> str:
+        tags = kw.get("personality_tags", [])
+        if tags:
+            template = self._adapter_data.get("personality_format", "")
+            return template.format(t="、".join(tags))
         return ""
+
+    def slot_recent_info(self, **kw) -> str:
+        entity = kw.get("entity")
+        memories = kw.get("memories", [])
+        if not entity:
+            return ""
+        if entity.recent_info:
+            template = self._adapter_data.get("recent_info_default", "")
+            return template.format(info=entity.recent_info)
+        if memories:
+            parts = ["### 最近经历"]
+            for entry in memories[:5]:
+                ts = entry.get("timestamp", "")
+                event = entry.get("event", "")
+                loc = entry.get("location", "")
+                line = f"  {ts} 在{loc} {event}" if loc else f"  {ts} {event}"
+                parts.append(line)
+            return "\n".join(parts) + "\n\n"
+        return ""
+
+    def slot_inventory(self, **kw) -> str:
+        entity = kw.get("entity")
+        if not entity:
+            return ""
+        ge = kw.get("engine")
+        if ge:
+            inv = ge.get_inventory_view(entity.entity_id)
+            if inv:
+                items = "、".join(
+                    f"{i['item_name']}x{i['quantity']}"
+                    for i in inv if i.get("quantity", 0) > 0
+                )
+                template = self._adapter_data.get("inventory", "")
+                return template.format(items=items)
+        return self._adapter_data.get("inventory_empty", "")
+
+    def slot_zone_others(self, **kw) -> str:
+        zone_npcs = kw.get("zone_npcs")
+        if zone_npcs:
+            others = "、".join(f"{z['name']}（{z['role']}）" for z in zone_npcs)
+            template = self._adapter_data.get("zone_others", "")
+            return template.format(others=others)
+        return ""
+
+    def slot_decision_guidance(self, **kw) -> str:
+        entity = kw.get("entity")
+        if not entity:
+            return ""
+        zone = _get_zone_name(entity, kw.get("engine"))
+        template = self._adapter_data.get("decision_guidance", "")
+        return template.format(name=entity.name, role=entity.role or "?", zone=zone)
+
+    def slot_combined_header(self, **kw) -> str:
+        count = kw.get("count", 0)
+        template = self._adapter_data.get("combined_header", "")
+        return template.format(count=count)
+
+    def slot_npc_state_section(self, **kw) -> str:
+        entities = kw.get("entities", [])
+        engine = kw.get("engine")
+        header = self._adapter_data.get("npc_state_header", "")
+        line_template = self._adapter_data.get("npc_state_line", "")
+        lines = [header]
+        for ent in entities:
+            inv = engine.get_inventory_view(ent.entity_id) if engine else []
+            inv_str = "、".join(
+                f"{i['item_name']}x{i['quantity']}" for i in inv
+            ) if inv else "空手"
+            zone = _get_zone_name(ent, engine)
+            lines.append(line_template.format(
+                name=ent.name,
+                role=ent.role or "?",
+                zone=zone,
+                v=ent.attributes.get("vitality", 100),
+                s=ent.attributes.get("satiety", 50),
+                m=ent.attributes.get("mood", 50),
+                inv=inv_str,
+            ))
+        return "".join(lines) + "\n\n"
+
+    def slot_plans_section(self, **kw) -> str:
+        npc_plans = kw.get("npc_plans", {})
+        entities = kw.get("entities", [])
+        header = self._adapter_data.get("plans_header", "")
+        lines = [header]
+        for ent in entities:
+            plan = npc_plans.get(ent.entity_id, "")
+            if plan:
+                lines.append(f"- {ent.name}：{plan[:300]}")
+        return "\n".join(lines) + "\n\n"
+
+    def slot_stories_section(self, **kw) -> str:
+        stories = kw.get("stories", [])
+        header = self._adapter_data.get("stories_header", "")
+        sep_template = self._adapter_data.get("story_separator", "")
+        lines = [header]
+        for i, story in enumerate(stories, 1):
+            lines.append(sep_template.format(i=i))
+            lines.append(story)
+        return "\n".join(lines) + "\n\n"
+
+    def slot_guidance_syntax(self, **kw) -> str:
+        return self._adapter_data.get("guidance_syntax", "")
+
+    def slot_recent_info_guidance(self, **kw) -> str:
+        return self._adapter_data.get("recent_info_guidance", "")
+
+    def slot_attr_constraints(self, **kw) -> str:
+        return self._adapter_data.get("attr_constraints", "")
+
+    def slot_attr_knowledge(self, **kw) -> str:
+        return self._adapter_data.get("attr_knowledge", "")
+
+    def slot_event_input(self, **kw) -> str:
+        component = kw.get("component")
+        if not component or not component.edges:
+            return self._adapter_data.get("event_input_empty", "")
+        lines_map = self._adapter_data.get("event_input_lines", {})
+        lines = []
+        for e in component.edges:
+            if e.edge_type == "npc_zone" and e.stayed:
+                lines.append(lines_map.get("npc_zone_stayed", "").format(source=e.source))
+            elif e.edge_type == "npc_zone":
+                lines.append(lines_map.get("npc_zone_arrived", "").format(source=e.source))
+            elif e.edge_type == "npc_npc" and not e.success:
+                lines.append(lines_map.get("npc_npc_failed", "").format(source=e.source, target=e.target))
+            elif e.edge_type == "npc_npc":
+                lines.append(lines_map.get("npc_npc_interact", "").format(source=e.source, target=e.target))
+            elif e.edge_type == "npc_object":
+                lines.append(lines_map.get("npc_object_use", "").format(source=e.source, target=e.target))
+        return "\n".join(lines) + "\n"
+
+    def slot_entity_blocks(self, **kw) -> str:
+        entity_blocks = kw.get("entity_blocks", [])
+        header = self._adapter_data.get("entity_blocks_header", "")
+        blocks = []
+        for ent, er in entity_blocks:
+            lines = [f"· {ent.name}"]
+            if ent.entity_type:
+                lines.append(f"  类型: {ent.entity_type}")
+            if ent.desc:
+                lines.append(f"  描述: {ent.desc}")
+            if ent.role:
+                lines.append(f"  身份: {ent.role}")
+            if er:
+                for key, label in [
+                    ("vitality_text", "活力"),
+                    ("satiety_text", "饱食"),
+                    ("mood_text", "心境"),
+                ]:
+                    val = er.get(key, "")
+                    if val:
+                        lines.append(f"  {label}: {val}")
+                mems = er.get("memories", "")
+                if mems:
+                    ml = mems.strip().split("\n")[:3]
+                    lines.append(f"  最近经历: {'；'.join(ml)}")
+                traits = er.get("traits", [])
+                if traits:
+                    lines.append(f"  性格: {'、'.join(str(t) for t in traits[:3])}")
+                intent = er.get("raw_intent", "")
+                if intent:
+                    lines.append(f"  想法: {intent}")
+            blocks.append("\n".join(lines))
+        text = "\n\n".join(blocks) if blocks else "(无节点信息)"
+        return header + text + "\n\n"
+
+    def slot_inventory_block(self, **kw) -> str:
+        component = kw.get("component")
+        exec_results = kw.get("exec_results", [])
+        engine = kw.get("engine")
+        if not component or not component.npc_names:
+            return ""
+        lines = []
+        for npc_name in sorted(component.npc_names):
+            er = next(
+                (r for r in exec_results if r.get("npc_name") == npc_name), None
+            )
+            if er and "npc_eid" in er and engine:
+                inv = engine.get_inventory_view(er["npc_eid"])
+                if inv:
+                    items = [f"{i['item_name']}x{i['quantity']}" for i in inv]
+                    lines.append(f"{npc_name}带着: {'、'.join(items)}")
+        if not lines:
+            return ""
+        template = self._adapter_data.get("inventory_block_format", "")
+        return template.format(lines="\n".join(f"  · {l}" for l in lines))
+
+    # ── 本地额外 slot handler ──
 
     def _slot_available_recipes(self, **kw) -> str:
         return ""
@@ -354,7 +649,6 @@ class NPCWorldAdapter(DomainAdapter):
         global_label_map: dict[str, str] | None,
         engine,
     ) -> str:
-        from ...config.config_loader import has_role
         from ...services.graph_engine import build_label_mapping_text
 
         ent = engine.get_entity(node_eid)
@@ -365,15 +659,15 @@ class NPCWorldAdapter(DomainAdapter):
         for conn_eid in ent.connected_entity_ids:
             topo_eids.add(conn_eid)
             ce = engine.get_entity(conn_eid)
-            if ce and has_role(ce.type_id, "region"):
+            if ce and _has_role(ce.type_id, "region"):
                 for other in engine.all_entities():
-                    if has_role(other.type_id, "actor") and other.entity_id != node_eid \
+                    if _has_role(other.type_id, "actor") and other.entity_id != node_eid \
                        and other.is_connected_to(conn_eid):
                         topo_eids.add(other.entity_id)
                         for oconn in other.connected_entity_ids:
                             if oconn not in topo_eids:
                                 ce2 = engine.get_entity(oconn)
-                                if ce2 and has_role(ce2.type_id, "thing"):
+                                if ce2 and _has_role(ce2.type_id, "thing"):
                                     topo_eids.add(oconn)
 
         topo_text, _ = engine.build_tagged_topology(
@@ -408,7 +702,7 @@ class NPCWorldAdapter(DomainAdapter):
         content_lines.append("所有节点共享同一套全局标签，标签在全图中含义一致。")
         content_lines.append("")
         if node_label:
-            content_lines.append(f"格式示例（在最终 JSON 的 operations 对象中）：")
+            content_lines.append("格式示例（在最终 JSON 的 operations 对象中）：")
             content_lines.append(f'  {{"op":"connect","src":"{{{node_label}}}","tgt":"{{A}}","qty":-1}}')
         content_lines.append('可用的 op：')
         content_lines.append('  "connect"    — 建立连接（两个节点之间）')
@@ -422,12 +716,12 @@ class NPCWorldAdapter(DomainAdapter):
         content_lines.append("5. 只输出 JSON，无分析文字，无 markdown。")
 
         prompt = (
-            f"==== [拓扑] ====\n"
-            f"图中每条边（带 label、qty、conserved/terminal 标签）"
-            f"完整定义了当前图拓扑结构。语义描述仅作参考，\n"
-            f"不具备约束力，不得覆盖拓扑信息。\n\n"
+            "==== [拓扑] ====\n"
+            "图中每条边（带 label、qty、conserved/terminal 标签）"
+            "完整定义了当前图拓扑结构。语义描述仅作参考，\n"
+            "不具备约束力，不得覆盖拓扑信息。\n\n"
             f"{topo_text}\n\n"
-            f"==== [内容] ====\n" + "\n".join(content_lines)
+            "==== [内容] ====\n" + "\n".join(content_lines)
         )
 
         return prompt
@@ -435,7 +729,6 @@ class NPCWorldAdapter(DomainAdapter):
     # ── LLM #2：全局标签映射 ──
 
     def build_global_label_map(self, graph) -> dict[str, str]:
-        from ...config.config_loader import has_role
         result: dict[str, str] = {}
         region_ents = []
         npc_ents = []
@@ -444,11 +737,11 @@ class NPCWorldAdapter(DomainAdapter):
         for ent in graph.all_entities():
             if not hasattr(ent, 'type_id'):
                 other_ents.append(ent)
-            elif has_role(ent.type_id, "region"):
+            elif _has_role(ent.type_id, "region"):
                 region_ents.append(ent)
-            elif has_role(ent.type_id, "actor"):
+            elif _has_role(ent.type_id, "actor"):
                 npc_ents.append(ent)
-            elif has_role(ent.type_id, "thing"):
+            elif _has_role(ent.type_id, "thing"):
                 item_ents.append(ent)
             else:
                 other_ents.append(ent)
@@ -510,7 +803,7 @@ class NPCWorldAdapter(DomainAdapter):
                     return text[:i + 1]
         return text
 
-    # ── 旧解析方法（Bridge）──
+    # ── 旧解析方法 ──
 
     def _resolve_label(self, val: str, tag_to_eid: dict[str, str]) -> str:
         if not val:
@@ -536,6 +829,7 @@ class NPCWorldAdapter(DomainAdapter):
             return []
 
         ops: list[GraphOp] = []
+
         def _resolve(val):
             return self._resolve_label(val, tag_to_eid)
 
@@ -648,7 +942,7 @@ class NPCWorldAdapter(DomainAdapter):
                     valid_ops.append({"op": "set_qty", "src": real_src, "tgt": real_tgt, "qty": qty})
         return valid_ops
 
-    # ── 原 NPC 专属属性（保留在 NPCWorldAdapter 上）──
+    # ── 原 NPC 专属属性 ──
 
     @property
     def interaction_rules(self) -> dict[str, Any]:

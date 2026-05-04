@@ -1,4 +1,4 @@
-# State: Phase I Step B ✅ — Prompt 模板移入 Adapter
+# State: Phase I ✅ — 接口通用化
 
 ## 已完成
 ### Phase I — 接口通用化
@@ -6,13 +6,19 @@
 - 验证 tick: 610.6s 通过
 
 **Step B** ✅ — Prompt 模板脱离全局字典
-- PROMPT_TEMPLATES 从 prompt_assembler.py 移入 NPCWorldAdapter
-- prompt_assembler.assemble() 改为调用 adapter.get_prompt_template(name)
-- prompt_assembler 纯渲染器：不拥有任何模板定义
-- SlotDef 新增 provider 字段（content/topology/runtime）
-- 渲染逻辑（_render_topo_slot / _render_runtime_slot）留在 prompt_assembler
 - 验证 tick: 679.4s 通过
 
-**Next: Step C** — NPCWorldAdapter 脱离 OldDomainAdapter
-- 现状: NPCWorldAdapter 仍然委托 _old_adapter 做 slot 渲染
-- 目标: domain.json + node_config.json 直接读取 → 删除 OldDomainAdapter
+**Step C** ✅ — NPCWorldAdapter 脱离 OldDomainAdapter
+- domain.json 直接读取，20+ slot 方法内联
+- 删掉 src/agent_world/services/domain_adapter.py (349 行)
+- 验证 tick: 417.6s 通过
+
+## 已完成里程碑
+- [x] Step 0: 创建 DomainAdapter 接口（domain/adapter.py）
+- [x] Step 1: Prompt 模板抽取（LLM #1 从 build_prompt_for_side → assemble("llm1_plan")）
+- [x] Step 2: LLM #2 + #4a + 度守恒校验移入 adapter
+- [x] Phase I: 接口通用化 + prompt 模板 + 脱离旧 adapter
+
+## 下一个 Phase
+### Phase II — PipelineEngine 通用编排
+通用编排引擎，不再使用 hardcoded 5 步循环。
