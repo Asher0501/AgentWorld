@@ -110,18 +110,14 @@ class PipelineOrchestrator:
     async def run_tick(
         self,
         npcs: list,
-        plan_map: dict[str, str],
-        npc_info: dict[str, dict],
         world_time_str: str = "",
         tick_duration_str: str = "",
     ) -> list[dict]:
         """
-        执行完整管线 tick（LLM #2 → IntentExecutor → LLM #3 → #4a/#4b/#5 → 执行）。
+        执行完整管线 tick（LLM #1 → #2 → IntentExecutor → #3 → #4a/#4b/#5 → 执行）。
 
         Args:
             npcs: DB NPC 模型列表
-            plan_map: LLM #1 输出的计划映射 {npc_eid: plan_text}
-            npc_info: NPC 信息 {npc_eid: {name, model, entity, ...}}
             world_time_str: 当前世界时间
             tick_duration_str: tick 持续时间标签
 
@@ -129,13 +125,18 @@ class PipelineOrchestrator:
             tick_results: 与旧 _execute_4llm_pipeline 返回格式一致
         """
         self._lazy_import()
-        ctx = self._build_context(plan_map, npc_info, world_time_str, tick_duration_str)
+        ctx = PipelineContext()
+        ctx.world_time_str = world_time_str
+        ctx.tick_duration_str = tick_duration_str
 
         if not self.llm_available or not self.resolver:
             raise RuntimeError("LLM 不可用")
 
+        # Step 1: LLM #1 — 计划生成
+        await self._run_stage_plan(npcs, ctx)
         if not ctx.plan_map:
             return []
+        logger.info(f"[LLM #1] {len(ctx.plan_map)} 个 NPC 的计划已生成")
 
         # Step 2: LLM #2 — 拓扑结构变更
         await self._stage_topo_structure(ctx)
@@ -158,15 +159,82 @@ class PipelineOrchestrator:
                      f"状态: {ctx.snapshot()}")
         return ctx.tick_results
 
-    def _build_context(self, plan_map, npc_info, wts, tds) -> PipelineContext:
-        ctx = PipelineContext()
-        ctx.plan_map = plan_map
-        ctx.npc_info = npc_info
-        ctx.world_time_str = wts
-        ctx.tick_duration_str = tds
-        ctx.first_topo_raw = ""
-        ctx.first_attr_raw = ""
-        return ctx
+    # ═══════════════════════════════════════════
+    # Step 1: LLM #1 — per-NPC 计划生成
+    # ═══════════════════════════════════════════
+
+    async def _run_stage_plan(self, npcs: list, ctx: PipelineContext) -> None:
+        """per-NPC 并发计划生成，填充 ctx.plan_map 和 ctx.npc_info。"""
+        from .graph_adapter import _make_eid
+        from .prompt_assembler import assemble
+        PLAN_TIMEOUT = 300.0
+
+        npc_prompts: list[tuple[str, str]] = []
+
+        for npc in npcs:
+            neid = _make_eid("npc", npc.name)
+            ent = self.graph_engine.get_entity(neid)
+            if not ent:
+                continue
+
+            inv = self.graph_engine.get_inventory_view(neid)
+            memories = []
+
+            personality_tags = []
+            for tag in (getattr(npc, 'persona_tags', []) or []):
+                if hasattr(tag, 'tag'):
+                    personality_tags.append(tag.tag)
+
+            zone_npcs = []
+            for conn in ent.connected_entity_ids:
+                e = self.graph_engine.get_entity(conn)
+                if e and self._has_role(e.type_id, "region"):
+                    for other_ent in self.graph_engine.all_entities():
+                        if self._has_role(other_ent.type_id, "actor") and other_ent != ent \
+                           and other_ent.is_connected_to(e.entity_id):
+                            zone_npcs.append({"name": other_ent.name, "role": other_ent.role or "?"})
+                    break
+
+            prompt = assemble(
+                "llm1_plan", self.adapter, self.graph_engine,
+                _caller="llm1", entity=ent, npc_name=npc.name,
+                npc_role=ent.role or "", memories=memories,
+                personality_tags=personality_tags, inventory=inv,
+                zone_npcs=zone_npcs,
+                time_str=ctx.world_time_str, tick_str=ctx.tick_duration_str,
+            )
+
+            npc_prompts.append((neid, prompt))
+            ctx.npc_info[neid] = {
+                "name": npc.name,
+                "model": npc,
+                "entity": ent,
+                "zone_npcs": zone_npcs,
+            }
+
+        if not npc_prompts:
+            return
+
+        raw_plans = await asyncio.wait_for(
+            self.resolver.resolve_all_npcs_async(npc_prompts),
+            timeout=PLAN_TIMEOUT,
+        )
+
+        for neid, _ in npc_prompts:
+            plan = raw_plans.get(neid, "")
+            if isinstance(plan, str) and plan.strip():
+                ctx.plan_map[neid] = plan
+            else:
+                info = ctx.npc_info.get(neid, {})
+                ent = info.get("entity")
+                zone_name = "?"
+                if ent:
+                    for conn in ent.connected_entity_ids:
+                        e = self.graph_engine.get_entity(conn)
+                        if e and self._has_role(e.type_id, "region"):
+                            zone_name = e.name
+                            break
+                ctx.plan_map[neid] = f"我在{zone_name}看看有什么可以做的。"
 
     # ═══════════════════════════════════════════
     # Step 2: LLM #2
