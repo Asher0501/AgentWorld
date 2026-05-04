@@ -52,12 +52,12 @@ def build_one_npc_prompt(
 
     # 找当前区域
     zone_id = "?"
+    from ..config.node_ontology import prefix_to_type_id
+    from ..config.config_loader import has_role
     for conn in npc_entity.connected_entity_ids:
-        e = None
-        # 在图引擎外部，无法直接查 Entity
-        # 从 ID 推断
-        if conn.startswith("zone_"):
-            zone_id = conn.replace("zone_", "")
+        tid = prefix_to_type_id(conn)
+        if tid and has_role(tid, "region"):
+            zone_id = conn.split("_", 1)[-1]
             break
 
     parts = [

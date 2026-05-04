@@ -40,9 +40,11 @@ def _get_zone_name(entity, ge) -> str:
             e = ge.get_entity(conn)
             if e and _has_role(e.type_id, "region"):
                 return e.name
+    from ..config.node_ontology import prefix_to_type_id
     for conn in entity.connected_entity_ids:
-        if conn.startswith("zone_"):
-            return conn.replace("zone_", "")
+        tid = prefix_to_type_id(conn)
+        if tid and _has_role(tid, "region"):
+            return conn.split("_", 1)[-1]
     return "?"
 
 
