@@ -73,6 +73,7 @@ class GraphNPCEngine:
         self._current_time_of_day = ""
         self._tick_duration_str = ""
         self._adapter = NPCWorldAdapter()
+        self._io_dir = ""
 
     def add_listener(self, listener: Callable):
         self._listeners.append(listener)

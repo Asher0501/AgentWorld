@@ -148,6 +148,12 @@ def has_recent_info(type_id: int) -> bool:
     return bool(switches.get("has_recent_info", False))
 
 
+def get_all_prefixes() -> list[str]:
+    """获取所有已注册的实体 ID 前缀，按长度降序（长前缀优先匹配）"""
+    _load()
+    return sorted(_TYPE_PREFIX_TO_ID.keys(), key=len, reverse=True)
+
+
 # ─── 标签映射查询 ───
 
 def get_all_label_mappings() -> dict[str, str]:

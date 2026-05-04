@@ -67,15 +67,21 @@ class GraphEngine:
         for eid, ent in self._entities.items():
             if ent.name == raw:
                 return eid
-        # 3. 去掉 'item_' 前缀后按名称匹配
-        name = raw.removeprefix("item_")
-        for eid, ent in self._entities.items():
-            if ent.name == name:
-                return eid
-        # 4. 按 eid 前缀匹配（如 'item_小麦' → 实际 eid 可能含 hash）
-        for eid in self._entities:
-            if eid.endswith(raw.removeprefix("item_")):
-                return eid
+        # 3. 去掉已注册前缀后按名称匹配
+        from ..config.config_loader import get_all_prefixes
+        for pfx in get_all_prefixes():
+            if raw.startswith(pfx):
+                name = raw[len(pfx):]
+                for eid, ent in self._entities.items():
+                    if ent.name == name:
+                        return eid
+        # 4. 按 eid 后缀匹配（LLM 输出含前缀 + 哈希等情况）
+        for pfx in get_all_prefixes():
+            if raw.startswith(pfx):
+                suffix = raw[len(pfx):]
+                for eid in self._entities:
+                    if eid.endswith(suffix):
+                        return eid
         return None
 
     def get_entity(self, entity_id: str) -> Entity | None:

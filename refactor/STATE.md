@@ -1,33 +1,50 @@
 # State: Phase II ✅ — PipelineEngine 通用编排
 
 ## Phase II 进展
-
 ### Step A ✅ — 类型系统扩展
-- `StageOutputType` 枚举（RAW_TEXT, GRAPH_OPS, PLANS_MAP, NARRATIVES, ATTR_UPDATE, VERIFY_RESULT, INTENT_EXEC）
-- `PipelineStage.output_type` 字段（各阶段声明自己的输出格式）
-- `StageResult` 扩展：`plan_map`, `narratives`, `state_changes`, `text_output`, `extra`
-- `PipelineEngine.run_stage_plan()` 新增（per-NPC 单次调用）
-- `PipelineEngine.parse_ops()` 智能跳过非 GRAPH_OPS 类型
-- NPCWorldAdapter 5 个 stage 全部声明 `output_type`
+- `StageOutputType` 枚举 + `PipelineStage.output_type` 字段
+- `StageResult` 扩展（plan_map, narratives, state_changes, text_output, extra）
 
 ### Step B ✅ — PipelineOrchestrator 框架
-- 创建 `services/pipeline_orchestrator.py` (446 行)
-- `PipelineContext` 统一上下文（plan_map, npc_info, stories, ops 等）
-- `PipelineOrchestrator.run_tick()` 编排 Step 2-7
-- `_execute_4llm_pipeline()` 从 200 行硬编码 → 40 行委托调用
-- 死导入清理（`PostProcessor`, `InteractionLayer`, `VerificationLayer`, `PipelineEngine`, `get_verification_config`, `build_one_npc_prompt`）
-- `graph_npc_engine.py` 从 819 行减到 650 行
+- `services/pipeline_orchestrator.py` 创建
+- `PipelineContext` 统一上下文
+- `run_tick()` 编排 Step 2-7，委托 LLM #1 外部
+
+### Step C ✅ — LLM #1 迁移
+- `_build_npc_plans()` (128 行) 从 graph_npc_engine 移入 orchestrator._run_stage_plan()
+- `_execute_intents()` (130 行) 从 graph_npc_engine 删除（orchestrator 已有完整版本）
+- `_val_to_*_text()` 3 个辅助函数删除
+- `run_tick()` 不再需要 plan_map/npc_info 参数——内部自建
+
+### Steps D+E+F ✅ — 旧类引用清理
+- `_lazy_import()` 删除 → 直接顶部导入 PostProcessor, InteractionLayer, VerificationLayer
+- 所有 `self._IL/_PP/_VL/_has_role` 替换为直接引用
+- graph_npc_engine.py: 819 → 370 行（-449 行）
+- orchestrator: 514 行，pipeline_engine: 252 行
+
+## 当前管线架构（Phase II 完成）
+```
+tick()
+  ├─ 构建图（build_world_graph）
+  ├─ orchestrator.run_tick(npcs, ...)
+  │   ├─ _run_stage_plan()          ← LLM #1
+  │   ├─ _stage_topo_structure()    ← LLM #2
+  │   ├─ _execute_intents()         ← 非 LLM
+  │   ├─ _stage_narrative()         ← LLM #3
+  │   ├─ _stage_verification_loop() ← #4a/#4b/#5
+  │   ├─ _apply_final_ops()
+  │   └─ _build_tick_results()
+  ├─ _decay_and_sync()
+  └─ _sync_back_to_nodes()
+```
 
 ## 已完成里程碑
 - [x] Phase I: 接口通用化 + prompt 模板 + 脱离旧 adapter
-- [x] Phase II Step A: 类型系统扩展
-- [x] Phase II Step B: PipelineOrchestrator 框架
+- [x] Phase II: PipelineEngine 通用编排（全部 6 步）
 
-## 下一个
-### Step C — 迁移 LLM #1（_build_npc_plans → orchestrator._run_stage_plan）
-### Step D — 迁移 LLM #3（InteractionLayer → orchestrator 直接管理）
-### Step E — 迁移验证循环（PostProcessor + VerificationLayer → _run_verification_loop 内联）
-### Step F — 清理：删除桥接、删除旧类、验证 tick
+## 待办（未来）
+- 运行验证 tick 确认行为不变
+- 考虑是否删除 PostProcessor/InteractionLayer/VerificationLayer 文件（共 ~43KB 代码）——当前架构下 orchestrator 直接实例化它们，无中间层
 
 ## Phase I 历史
 ### Phase I — 接口通用化
