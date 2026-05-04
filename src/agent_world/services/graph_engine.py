@@ -858,8 +858,7 @@ def _is_item_type(eid: str) -> bool:
     """判断实体 ID 是否为物品类型（守恒量候选）"""
     tid = prefix_to_type_id(eid)
     if not tid:
-        return eid.startswith("item_")
-    from ..config.config_loader import has_role
+        return False
     return has_role(tid, "thing")
 
 
