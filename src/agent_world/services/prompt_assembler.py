@@ -1,12 +1,14 @@
 """
-PromptAssembler — Slot 式 Prompt 组装器。
+PromptAssembler — Slot 式 Prompt 组装器（纯渲染器）。
 
-每个 LLM prompt 由有序 slot 列表定义。每个 slot 分属三类提供者：
-  - "content"  → DomainAdapter 的 `get_slot(name)` 方法
-  - "topology" → 引擎固定渲染
-  - "runtime"  → 运行时信息（时间等）
+每个 LLM prompt 由有序 slot 列表定义。slot 列表由域 adapter 提供。
 
-换域 = 换 DomainAdapter。slot 列表几乎不变。
+slot 分属三类提供者：
+  - "content"  → adapter.render_slot()
+  - "topology" → _render_topo_slot()（引擎固定渲染）
+  - "runtime"  → _render_runtime_slot()（时间、反馈等）
+
+换域 = 换 adapter。prompt_assembler 不关心域细节。
 """
 from __future__ import annotations
 import hashlib
@@ -15,88 +17,6 @@ import os
 import re
 from typing import Any
 import httpx
-
-
-# ─── Slot 列表定义 ───────────────────────────────────
-# 每条 = (slot_name, provider_type)
-# "content" → adapter.get_slot(slot_name, **kw) 提供
-# "topology" → _render_topo_slot(slot_name, engine, **kw)
-# "runtime" → 运行时（时间字符串） 由组装器直接处理
-
-PROMPT_TEMPLATES: dict[str, list[tuple[str, str]]] = {
-
-    "llm1_plan": [
-        ("time_info",            "runtime"),
-        ("survival_needs",       "content"),
-        ("entity_identity",      "content"),
-        ("personality",          "content"),
-        ("recent_info",          "content"),
-        ("inventory",            "content"),
-        ("zone_others",          "content"),
-        ("available_recipes",    "content"),
-        ("entity_constraints",    "content"),
-        ("label_mapping",        "topology"),
-        ("topology_constraints_plan", "topology"),
-        ("decision_guidance",    "content"),
-    ],
-
-    "llm2_structure": [
-        ("system_role",          "content"),
-        ("core_principle",       "topology"),
-        ("global_overview",      "topology"),
-        ("combined_header",      "content"),
-        ("npc_block",            "content"),   # 每个 NPC 一组 [拓扑]+[内容]
-        ("output_instructions",  "content"),
-    ],
-
-    "llm3_story": [
-        ("system_role",          "content"),
-        ("time_info",            "runtime"),
-        ("gap_content_header",   "topology"),
-        ("entity_blocks",        "content"),
-        ("inventory_block",      "content"),
-        ("gap_topology_header",  "topology"),
-        ("topology_principle",   "topology"),
-        ("topology_graph",       "topology"),
-        ("label_mapping",        "topology"),
-        ("topology_constraints_abstract", "topology"),
-        ("gap_event_header",     "topology"),
-        ("event_input",          "content"),
-        ("gap_output_header",    "topology"),
-        ("output_instructions",  "content"),
-    ],
-
-    "llm4a_topo": [
-        ("feedback",             "runtime"),
-        ("system_role",          "content"),
-        ("time_info",            "runtime"),
-        ("npc_state_section",    "content"),
-        ("plans_section",        "content"),
-        ("stories_section",      "content"),
-        ("topology_section_header",   "topology"),
-        ("topology_principle",        "topology"),
-        ("topology_graph",            "topology"),
-        ("label_mapping_topo",        "topology"),
-        ("topology_constraints",      "topology"),
-        ("guidance_syntax",           "content"),
-        ("output_format",             "content"),
-    ],
-
-    "llm4b_content": [
-        ("feedback",             "runtime"),
-        ("system_role",          "content"),
-        ("time_info",            "runtime"),
-        ("npc_state_section",    "content"),
-        ("plans_section",        "content"),
-        ("stories_section",      "content"),
-        ("label_mapping",        "topology"),
-        ("topology_constraints_recent", "topology"),
-        ("recent_info_guidance", "content"),
-        ("attr_constraints",     "content"),
-        ("attr_knowledge",       "content"),
-        ("output_format",        "content"),
-    ],
-}
 
 
 # ─── 拓扑层渲染函数（引擎固定，跨域不变） ───────────
@@ -688,27 +608,37 @@ def assemble(
     """
     按 slot 列表组装完整的 LLM prompt。
 
+    模板定义由域 adapter 的 get_prompt_template() 提供。
+    每个 slot 由 provider 类型决定渲染方式：
+      - "content"  → adapter.render_slot()
+      - "topology" → _render_topo_slot()
+      - "runtime"  → _render_runtime_slot()
+
     Args:
-        template_name: PROMPT_TEMPLATES 中的 key
-        adapter: DomainAdapter 实例（提供 content 槽位）
-        engine: GraphEngine 实例（可选，提供 topology 槽位）
+        template_name: 模板名称，传给 adapter.get_prompt_template()
+        adapter: DomainAdapter 实例
+        engine: GraphEngine 实例
         **kw: 透传给各槽位的额外参数
 
     Returns:
         完整 prompt 字符串
     """
-    slots = PROMPT_TEMPLATES.get(template_name)
-    if slots is None:
-        raise ValueError(f"未知模板: {template_name}")
+    if not adapter:
+        return f"<!-- no adapter provided for template: {template_name} -->"
+
+    slot_defs = adapter.get_prompt_template(template_name)
+    if not slot_defs:
+        raise ValueError(f"未知模板: {template_name} (adapter={type(adapter).__name__})")
 
     parts = []
-    for slot_name, provider in slots:
+    for slot in slot_defs:
+        provider = slot.provider
         if provider == "content":
-            text = adapter.render_slot(slot_name, engine=engine, **kw)
+            text = adapter.render_slot(slot.name, engine=engine, **kw)
         elif provider == "topology":
-            text = _render_topo_slot(slot_name, engine, **kw)
+            text = _render_topo_slot(slot.name, engine, **kw)
         elif provider == "runtime":
-            text = _render_runtime_slot(slot_name, **kw)
+            text = _render_runtime_slot(slot.name, **kw)
         else:
             text = f"<!-- unknown provider: {provider} -->\n"
         if text:

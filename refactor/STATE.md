@@ -1,14 +1,18 @@
-# State: Phase I Step A ✅ — 通用 DomainAdapter 接口
+# State: Phase I Step B ✅ — Prompt 模板移入 Adapter
 
 ## 已完成
 ### Phase I — 接口通用化
 **Step A** ✅ — 重写 adapter.py 抽象接口
-- 新接口: classify_node / describe_node / get_config / get_pipeline_stages / get_prompt_template / get_validators
-- NodeClassification 布尔旗替代枚举 NodeRole
-- 所有 NPC 专属方法改为桥接（get_zones → get_config("zones") 等）
-- NPCWorldAdapter 实现新接口 + 保留旧方法做桥接
-- 验证 tick: 610.6s 通过（与 Step 2c tick 行为一致）
+- 验证 tick: 610.6s 通过
 
-**Next: Step B** — prompt 模板脱离全局字典
-- prompt_assembler.STAGE_TEMPLATES → adapter.get_prompt_template(name) 提供
-- prompt_assembler 只做渲染器，不再是模板仓库
+**Step B** ✅ — Prompt 模板脱离全局字典
+- PROMPT_TEMPLATES 从 prompt_assembler.py 移入 NPCWorldAdapter
+- prompt_assembler.assemble() 改为调用 adapter.get_prompt_template(name)
+- prompt_assembler 纯渲染器：不拥有任何模板定义
+- SlotDef 新增 provider 字段（content/topology/runtime）
+- 渲染逻辑（_render_topo_slot / _render_runtime_slot）留在 prompt_assembler
+- 验证 tick: 679.4s 通过
+
+**Next: Step C** — NPCWorldAdapter 脱离 OldDomainAdapter
+- 现状: NPCWorldAdapter 仍然委托 _old_adapter 做 slot 渲染
+- 目标: domain.json + node_config.json 直接读取 → 删除 OldDomainAdapter

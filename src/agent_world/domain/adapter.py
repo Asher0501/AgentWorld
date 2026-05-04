@@ -54,9 +54,16 @@ class NodeDescriptor:
 
 @dataclass
 class SlotDef:
-    """Prompt 模板中的槽定义。"""
+    """Prompt 模板中的槽定义。
+    
+    name: slot 名称，对应 adapter.render_slot() 的 slot_name
+    provider: 值提供者
+      - "content"  → adapter.render_slot()
+      - "topology" → 引擎 _render_topo_slot()
+      - "runtime"  → 运行时渲染
+    """
     name: str
-    type: str = "content"  # "content" | "topology"
+    provider: str = "content"  # "content" | "topology" | "runtime"
 
 
 @dataclass

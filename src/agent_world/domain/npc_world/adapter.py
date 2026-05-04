@@ -101,13 +101,79 @@ class NPCWorldAdapter(DomainAdapter):
                 parser=lambda raw, g: self.parse_llm_output(5, raw, None, g)),
         ]
 
+    PROMPT_TEMPLATES: dict[str, list[tuple[str, str]]] = {
+        "llm1_plan": [
+            ("time_info",            "runtime"),
+            ("survival_needs",       "content"),
+            ("entity_identity",      "content"),
+            ("personality",          "content"),
+            ("recent_info",          "content"),
+            ("inventory",            "content"),
+            ("zone_others",          "content"),
+            ("available_recipes",    "content"),
+            ("entity_constraints",    "content"),
+            ("label_mapping",        "topology"),
+            ("topology_constraints_plan", "topology"),
+            ("decision_guidance",    "content"),
+        ],
+        "llm2_structure": [
+            ("system_role",          "content"),
+            ("core_principle",       "topology"),
+            ("global_overview",      "topology"),
+            ("combined_header",      "content"),
+            ("npc_block",            "content"),
+            ("output_instructions",  "content"),
+        ],
+        "llm3_story": [
+            ("system_role",          "content"),
+            ("time_info",            "runtime"),
+            ("gap_content_header",   "topology"),
+            ("entity_blocks",        "content"),
+            ("inventory_block",      "content"),
+            ("gap_topology_header",  "topology"),
+            ("topology_principle",   "topology"),
+            ("topology_graph",       "topology"),
+            ("label_mapping",        "topology"),
+            ("topology_constraints_abstract", "topology"),
+            ("gap_event_header",     "topology"),
+            ("event_input",          "content"),
+            ("gap_output_header",    "topology"),
+            ("output_instructions",  "content"),
+        ],
+        "llm4a_topo": [
+            ("feedback",             "runtime"),
+            ("system_role",          "content"),
+            ("time_info",            "runtime"),
+            ("npc_state_section",    "content"),
+            ("plans_section",        "content"),
+            ("stories_section",      "content"),
+            ("topology_section_header",   "topology"),
+            ("topology_principle",        "topology"),
+            ("topology_graph",            "topology"),
+            ("label_mapping_topo",        "topology"),
+            ("topology_constraints",      "topology"),
+            ("guidance_syntax",           "content"),
+            ("output_format",             "content"),
+        ],
+        "llm4b_content": [
+            ("feedback",             "runtime"),
+            ("system_role",          "content"),
+            ("time_info",            "runtime"),
+            ("npc_state_section",    "content"),
+            ("plans_section",        "content"),
+            ("stories_section",      "content"),
+            ("label_mapping",        "topology"),
+            ("topology_constraints_recent", "topology"),
+            ("recent_info_guidance", "content"),
+            ("attr_constraints",     "content"),
+            ("attr_knowledge",       "content"),
+            ("output_format",        "content"),
+        ],
+    }
+
     def get_prompt_template(self, name: str) -> list[SlotDef]:
-        from ...services.prompt_assembler import STAGE_TEMPLATES, SlotType
-        raw = STAGE_TEMPLATES.get(name, [])
-        return [
-            SlotDef(name=s.name, type="topology" if s.type == SlotType.TOPOLOGY else "content")
-            for s in raw
-        ]
+        raw = self.PROMPT_TEMPLATES.get(name, [])
+        return [SlotDef(name=s[0], provider=s[1]) for s in raw]
 
     def get_validators(self) -> list[GraphValidator]:
         return [
@@ -161,6 +227,7 @@ class NPCWorldAdapter(DomainAdapter):
 
     def _build_template(self, tmpl_name: str, graph, label_map, **kw) -> str:
         from ...services.prompt_assembler import assemble
+        kw.pop('engine', None)  # 避免与显式 engine=graph 冲突
         return assemble(
             tmpl_name, self, engine=graph or self.get_graph_engine(),
             label_map=label_map, **kw
