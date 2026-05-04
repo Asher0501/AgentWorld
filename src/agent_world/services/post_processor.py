@@ -56,7 +56,7 @@ class PostProcessor:
     ) -> list[dict]:
         """
         LLM #4a: 故事 + 拓扑 → 拓扑层操作。
-        不输出 attr，不输出 recent_info。
+        解析委托给域适配器。
 
         Returns:
             [{op: "delta"|"system_delta"|"recipe"|...}]
@@ -78,11 +78,18 @@ class PostProcessor:
             return []
 
         raw = self._resolver._call_llm(prompt)
-        self._last_raw_topo_response = raw  # ← 存档供重试用
+        self._last_raw_topo_response = raw
         if not raw or not raw.strip():
             return []
 
-        ops = self._parse_topo_output(raw, graph_engine)
+        # 通过域适配器解析（支持除名解析+拓扑校验）
+        if self._adapter:
+            ops = self._adapter.parse_llm_output(
+                stage=4, raw_text=raw, label_map=None, graph=graph_engine,
+            )
+        else:
+            ops = self._parse_topo_output(raw, graph_engine)
+
         logger.info(f"[LLM #4a] 解析到 {len(ops)} 个拓扑操作")
         return ops
 
@@ -143,80 +150,37 @@ class PostProcessor:
         feedback: str = "",
     ) -> str:
         """构建 LLM #4a prompt：拓扑层操作。"""
-        if self._adapter:
-            # 构建 entities list + topo pool
-            entities = []
-            topo_pool: set[str] = set()
-            for npc_eid in npc_plans:
-                ent = graph_engine.get_entity(npc_eid)
-                if ent:
-                    entities.append(ent)
-                    topo_pool.add(npc_eid)
-                    # 扩展：zone + zone内其他NPC + 物品
-                    for conn_eid in ent.connected_entity_ids:
-                        topo_pool.add(conn_eid)
-                        ce = graph_engine.get_entity(conn_eid)
-                        if ce and has_role(ce.type_id, "region"):
-                            for other in graph_engine.all_entities():
-                                if has_role(other.type_id, "actor") \
-                                   and other.entity_id not in topo_pool \
-                                   and other.is_connected_to(conn_eid):
-                                    topo_pool.add(other.entity_id)
-                                    for oconn in other.connected_entity_ids:
-                                        ce2 = graph_engine.get_entity(oconn)
-                                        if ce2 and has_role(ce2.type_id, "thing"):
-                                            topo_pool.add(oconn)
-            return assemble(
-                "llm4a_topo", self._adapter, graph_engine,
-                _caller="llm4a",
-                time_str=world_time_str,
-                tick_str=tick_duration_str,
-                entities=entities,
-                npc_plans=npc_plans,
-                stories=stories,
-                topo_eids=list(topo_pool),
-                feedback=feedback,
-            )
-
-        # 旧版回退
-        parts = ["你是一个世界模拟引擎的**拓扑变化推理模块**（LLM #4a）。","","你的任务：根据 NPC 的计划、故事叙事以及当前拓扑状态，","推理出本次 tick 的**图结构变化**（边的数量增删）。",""]
-        if world_time_str:
-            parts.append(f"当前时间：{world_time_str}")
-        if tick_duration_str:
-            parts.append(f"本 tick 时长：{tick_duration_str}")
-        if world_time_str or tick_duration_str:
-            parts.append("")
-        parts.append("==== 当前 NPC 状态 ====")
-        for npc_eid, plan in npc_plans.items():
+        entities = []
+        topo_pool: set[str] = set()
+        for npc_eid in npc_plans:
             ent = graph_engine.get_entity(npc_eid)
             if ent:
-                eid = ent.entity_id
-                inv = graph_engine.get_inventory_view(eid)
-                inv_str = "、".join(f"{i['item_name']}x{i['quantity']}" for i in inv) if inv else "空手"
-                zone_name = "?"
-                for conn in ent.connected_entity_ids:
-                    e = graph_engine.get_entity(conn)
-                    if e and has_role(e.type_id, "region"):
-                        zone_name = e.name
-                        break
-                parts.append(f"- {ent.name}（{ent.role or '?'}）@{zone_name} | "
-                    f"体力{ent.attributes.get('vitality', 100):.0f}/100 "
-                    f"饱腹{ent.attributes.get('satiety', 50):.0f}/100 "
-                    f"心情{ent.attributes.get('mood', 50):.0f}/100 | 持有：{inv_str}")
-            else:
-                parts.append(f"- {npc_eid}（？）")
-        parts.append("")
-        parts.append("==== 每位 NPC 的本轮计划 ====")
-        for npc_eid, plan in npc_plans.items():
-            ent = graph_engine.get_entity(npc_eid)
-            parts.append(f"- {ent.name if ent else npc_eid}：{plan[:300]}")
-        parts.append("")
-        parts.append("==== 本轮故事叙事 ====")
-        for i, story in enumerate(stories, 1):
-            parts.append(f"--- 事件 {i} ---")
-            parts.append(story)
-        parts.append("")
-        return "\n".join(parts)  # placeholder for fallback
+                entities.append(ent)
+                topo_pool.add(npc_eid)
+                for conn_eid in ent.connected_entity_ids:
+                    topo_pool.add(conn_eid)
+                    ce = graph_engine.get_entity(conn_eid)
+                    if ce and has_role(ce.type_id, "region"):
+                        for other in graph_engine.all_entities():
+                            if has_role(other.type_id, "actor") \
+                               and other.entity_id not in topo_pool \
+                               and other.is_connected_to(conn_eid):
+                                topo_pool.add(other.entity_id)
+                                for oconn in other.connected_entity_ids:
+                                    ce2 = graph_engine.get_entity(oconn)
+                                    if ce2 and has_role(ce2.type_id, "thing"):
+                                        topo_pool.add(oconn)
+        return assemble(
+            "llm4a_topo", self._adapter, graph_engine,
+            _caller="llm4a",
+            time_str=world_time_str,
+            tick_str=tick_duration_str,
+            entities=entities,
+            npc_plans=npc_plans,
+            stories=stories,
+            topo_eids=list(topo_pool),
+            feedback=feedback,
+        )
 
     def _build_content_prompt(
         self,
@@ -228,80 +192,42 @@ class PostProcessor:
         feedback: str = "",
     ) -> str:
         """构建 LLM #4b prompt：内容层操作。"""
-        if self._adapter:
-            # 只包含故事中提到的 NPC（大幅减少 prompt 大小）
-            story_text = " ".join(stories)
-            from ..config.config_loader import get_all_label_mappings
-            known_names = set(get_all_label_mappings().keys())
-            story_names = set()
-            for name in known_names:
-                if name in story_text:
-                    story_names.add(name)
-            # 也保留 zone 和 item（它们不是 NPC 但需要状态上下文）
-            all_ents = graph_engine.all_entities()
-            zone_names = {e.name for e in all_ents if e.type_id == "region"}
-            item_names = {e.name for e in all_ents if e.type_id == "thing"}
-            active_names = story_names | zone_names | item_names
+        # 只包含故事中提到的 NPC（大幅减少 prompt 大小）
+        story_text = " ".join(stories)
+        from ..config.config_loader import get_all_label_mappings
+        known_names = set(get_all_label_mappings().keys())
+        story_names = set()
+        for name in known_names:
+            if name in story_text:
+                story_names.add(name)
+        # 也保留 zone 和 item（它们不是 NPC 但需要状态上下文）
+        all_ents = graph_engine.all_entities()
+        zone_names = {e.name for e in all_ents if e.type_id == "region"}
+        item_names = {e.name for e in all_ents if e.type_id == "thing"}
+        active_names = story_names | zone_names | item_names
 
-            entities = []
-            active_plans = {}
-            for npc_eid in npc_plans:
-                ent = graph_engine.get_entity(npc_eid)
-                if ent and ent.name in active_names:
-                    entities.append(ent)
-                    active_plans[npc_eid] = npc_plans[npc_eid]
-            # 如果过滤后没有 NPC，回退到全部
-            if not any(e.type_id == "actor" for e in entities):
-                entities = [graph_engine.get_entity(eid) for eid in npc_plans if graph_engine.get_entity(eid)]
-                active_plans = dict(npc_plans)
+        entities = []
+        active_plans = {}
+        for npc_eid in npc_plans:
+            ent = graph_engine.get_entity(npc_eid)
+            if ent and ent.name in active_names:
+                entities.append(ent)
+                active_plans[npc_eid] = npc_plans[npc_eid]
+        # 如果过滤后没有 NPC，回退到全部
+        if not any(e.type_id == "actor" for e in entities):
+            entities = [graph_engine.get_entity(eid) for eid in npc_plans if graph_engine.get_entity(eid)]
+            active_plans = dict(npc_plans)
 
-            return assemble(
-                "llm4b_content", self._adapter, graph_engine,
-                _caller="llm4b",
-                time_str=world_time_str,
-                tick_str=tick_duration_str,
-                entities=entities,
-                npc_plans=active_plans,
-                stories=stories,
-                feedback=feedback,
-            )
-        # 旧版回退
-        parts = ["你是一个世界模拟引擎的**内容变化推理模块**（LLM #4b）。","","你的任务：根据 NPC 的计划、故事叙事以及已执行的拓扑变更，","推理出本次 tick 的**属性变化和近况摘要**。",""]
-        if world_time_str:
-            parts.append(f"当前时间：{world_time_str}")
-        if tick_duration_str:
-            parts.append(f"本 tick 时长：{tick_duration_str}")
-        if world_time_str or tick_duration_str:
-            parts.append("")
-        parts.append("==== 当前 NPC 状态 ====")
-        for npc_eid, plan in npc_plans.items():
-            ent = graph_engine.get_entity(npc_eid)
-            if ent:
-                eid = ent.entity_id
-                inv = graph_engine.get_inventory_view(eid)
-                inv_str = "、".join(f"{i['item_name']}x{i['quantity']}" for i in inv) if inv else "空手"
-                zone_name = "?"
-                for conn in ent.connected_entity_ids:
-                    e = graph_engine.get_entity(conn)
-                    if e and has_role(e.type_id, "region"):
-                        zone_name = e.name
-                        break
-                parts.append(f"- {ent.name}（{ent.role or '?'}）@{zone_name} | "
-                    f"体力{ent.attributes.get('vitality', 100):.0f}/100 "
-                    f"饱腹{ent.attributes.get('satiety', 50):.0f}/100 "
-                    f"心情{ent.attributes.get('mood', 50):.0f}/100 | 持有：{inv_str}")
-        parts.append("")
-        parts.append("==== 每位 NPC 的本轮计划 ====")
-        for npc_eid, plan in npc_plans.items():
-            ent = graph_engine.get_entity(npc_eid)
-            parts.append(f"- {ent.name if ent else npc_eid}：{plan[:300]}")
-        parts.append("")
-        parts.append("==== 本轮故事叙事 ====")
-        for i, story in enumerate(stories, 1):
-            parts.append(f"--- 事件 {i} ---")
-            parts.append(story)
-        parts.append("")
-        return "\n".join(parts)  # placeholder for fallback
+        return assemble(
+            "llm4b_content", self._adapter, graph_engine,
+            _caller="llm4b",
+            time_str=world_time_str,
+            tick_str=tick_duration_str,
+            entities=entities,
+            npc_plans=active_plans,
+            stories=stories,
+            feedback=feedback,
+        )
 
     # ─── 解析 ───
 

@@ -385,27 +385,11 @@ class GraphNPCEngine:
 
         # ═══ 降级过滤：LLM #5 重试耗尽后，度守恒仍失败 → 静默移除坏操作 ═══
         if topo_ops:
-            from .conservation_validator import ConservationValidator
-            cv = ConservationValidator(self.graph_engine)
-            fallback_outcome = cv.validate_deltas(topo_ops)
-            if fallback_outcome.result.value in ("hard_fail",):
-                logger.warning(f"[降级] 度守恒仍失败: {fallback_outcome.message}")
-                passed = fallback_outcome.passed_groups or set()
-                before = len(topo_ops)
-                filtered = []
-                for op in topo_ops:
-                    if op.get("op") in ("system_delta", "recipe"):
-                        filtered.append(op)
-                    elif op.get("op") == "delta":
-                        g = op.get("group", None)
-                        if g in passed or ("group" not in op and None in passed):
-                            filtered.append(op)
-                    else:
-                        filtered.append(op)
-                removed = before - len(filtered)
-                if removed:
-                    logger.warning(f"[降级] 已移除 {removed}/{before} 操作（度守恒）")
-                topo_ops = filtered
+            filtered = self._adapter.validate_ops(topo_ops, self.graph_engine)
+            removed = len(topo_ops) - len(filtered)
+            if removed:
+                logger.warning(f"[降级] 度守恒移除 {removed}/{len(topo_ops)} 操作")
+            topo_ops = filtered
 
         logger.info(f"[LLM #5] 最终: {len(topo_ops)} topo, {len(attr_ops)} attr, {len(recent_info_map)} ri")
 
