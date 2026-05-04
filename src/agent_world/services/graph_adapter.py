@@ -63,7 +63,7 @@ def item_to_entity(name: str, initial_qty: int = 1) -> Entity:
 def zone_to_entity(config: Any) -> Entity:
     if not config or not hasattr(config, "name"):
         return None
-    eid = f"zone_{config.name}"
+    eid = _make_zone_eid(config.name)
     ent = Entity(entity_id=eid, name=config.name)
     ent.role = getattr(config, "role", "")
     ent.desc = getattr(config, "desc", "")
@@ -131,10 +131,10 @@ def _build_zone_lookup(zones: list) -> dict[str, str]:
         zid = cfg.get("id", "") if isinstance(cfg, dict) else getattr(cfg, "id", "")
         if not name:
             continue
-        eid = f"zone_{name}"
-        lookup[name] = eid       # "狐狸与鹅酒馆" → "zone_狐狸与鹅酒馆"
+        eid = _make_zone_eid(name)
+        lookup[name] = eid       # 中文名 → zone EID
         if zid and zid != name:
-            lookup[zid] = eid    # "fox_and_goose" → "zone_狐狸与鹅酒馆"
+            lookup[zid] = eid    # "fox_and_goose" → zone EID
     return lookup
 
 
@@ -154,7 +154,7 @@ def _resolve_zone_eid(ge, raw: str, zone_lookup: dict[str, str]) -> str | None:
     if ge.get_entity(raw):
         return raw
     # 3. 尝试 zone_ 前缀
-    constructed = f"zone_{raw}"
+    constructed = _make_zone_eid(raw)
     if ge.get_entity(constructed):
         return constructed
     # 4. 按 display name 查找
@@ -199,7 +199,7 @@ def init_graph_edges_from_adapter(ge, npcs: list, zones: list):
 
     # 区域双向连接
     for cfg in zones:
-        zone_eid = f"zone_{cfg.name}"
+        zone_eid = _make_zone_eid(cfg.name)
         connects = getattr(cfg, "connects_to", []) or getattr(cfg, "connected_zones", [])
         for neighbor_name in connects:
             neighbor_eid = _resolve_zone_eid(ge, neighbor_name, zone_lookup)
@@ -213,12 +213,26 @@ def init_graph_edges_from_adapter(ge, npcs: list, zones: list):
 
 # ─── 辅助 ───
 
-def _make_eid(prefix: str, name: str) -> str:
-    """生成唯一实体 ID"""
+def _make_eid(subject: str, name: str) -> str:
+    """生成唯一实体 ID。支持两种用法：
+    - role 模式: _make_eid("actor", name) → 从 config 查 actor 角色的前缀
+    - legacy 模式: _make_eid("npc", name) → 直接用 "npc" 作为前缀
+    """
+    from ..config.config_loader import get_prefix_by_role
+    pfx = get_prefix_by_role(subject)
+    if pfx is None:
+        pfx = f"{subject}_"  # legacy fallback
     safe_name = name.replace(" ", "_").replace("　", "_")
     import hashlib
     h = hashlib.md5(safe_name.encode()).hexdigest()[:8]
-    return f"{prefix}_{h}"
+    return f"{pfx}{h}"
+
+
+def _make_zone_eid(name: str, *, from_role: str = "region") -> str:
+    """使用 config 前缀生成区域 EID。区域使用名称直接作为 ID（不 hash）。"""
+    from ..config.config_loader import get_prefix_by_role
+    pfx = get_prefix_by_role(from_role) or "zone_"
+    return f"{pfx}{name}"
 
 
 def _get_zone_for(cfg) -> str:

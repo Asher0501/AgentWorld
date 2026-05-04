@@ -162,6 +162,16 @@ def try_strip_prefix(raw: str) -> str:
     return raw
 
 
+def get_prefix_by_role(role: str) -> str | None:
+    """查找拥有指定角色的类型的前缀。如 role='actor' → 'npc_'"""
+    _load()
+    for tid, tdef in _TYPE_DEFS.items():
+        roles = tdef.get("roles", [])
+        if role in roles:
+            return tdef.get("prefix", f"{tdef['id']}_")
+    return None
+
+
 # ─── 标签映射查询 ───
 
 def get_all_label_mappings() -> dict[str, str]:
