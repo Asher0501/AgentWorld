@@ -37,9 +37,10 @@ class PostProcessor:
     #4a 先执行（边操作），#4b 后执行（节点属性）。
     """
 
-    def __init__(self, resolver=None, adapter=None):
-        self._resolver = resolver  # InteractionResolver（复用 LLM 调用能力）
-        self._adapter = adapter  # VillageDomainAdapter
+    def __init__(self, resolver=None, adapter=None, engine=None):
+        self._resolver = resolver
+        self._adapter = adapter
+        self._engine = engine  # PipelineEngine（提供 IO 日志 + 计时）
 
     # ════════════════════════════════════════════════════════════════
     # LLM #4a: 拓扑层操作 (delta / system_delta / recipe)
@@ -77,7 +78,10 @@ class PostProcessor:
             logger.warning("[LLM #4a] 无 LLM resolver")
             return []
 
-        raw = self._resolver._call_llm(prompt)
+        if self._engine:
+            raw = self._engine.call_llm(prompt, "topo_delta")
+        else:
+            raw = self._resolver._call_llm(prompt)
         self._last_raw_topo_response = raw
         if not raw or not raw.strip():
             return []
@@ -129,7 +133,10 @@ class PostProcessor:
             logger.warning("[LLM #4b] 无 LLM resolver")
             return [], {}
 
-        raw = self._resolver._call_llm(prompt)
+        if self._engine:
+            raw = self._engine.call_llm(prompt, "content_update")
+        else:
+            raw = self._resolver._call_llm(prompt)
         self._last_raw_attr_response = raw  # ← 存档供重试用
         if not raw or not raw.strip():
             return [], {}

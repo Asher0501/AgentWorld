@@ -26,18 +26,13 @@ from ..models.npc import NPC, Position
 from ..models.world import World, Zone
 
 from ..config.config_loader import has_role
-from ..cognition.npc_prompt_builder import build_one_npc_prompt
 
 from .graph_engine import GraphEngine
 from .graph_adapter import build_world_graph, _make_eid
 from .interaction_resolver import InteractionResolver
-from .intent_executor import IntentResolver
-from .post_processor import PostProcessor
-from .interaction_layer import InteractionLayer
-from .verification_layer import VerificationLayer
-from ..config.config_loader import get_verification_config
 from ..domain.npc_world.adapter import NPCWorldAdapter
 from .prompt_assembler import assemble
+from .pipeline_orchestrator import PipelineOrchestrator
 
 
 # ─── 数值→文字辅助（供 LLM #3 叙事使用） ───
@@ -257,206 +252,47 @@ class GraphNPCEngine:
 
     async def _execute_4llm_pipeline(self, npcs) -> list[dict]:
         """
-        4-LLM 流水线主流程。
+        由 PipelineOrchestrator 编排的 4-LLM 流水线。
 
         每个阶段独立：
           LLM #1 — 读拓扑 → 写计划（自然语言）
           LLM #2 — 读计划 + 拓扑 → 写拓扑结构变更
           IntentExecutor — 执行结构变更
           LLM #3 — 读更新后拓扑 + 计划 → 写故事（纯自然语言）
-          LLM #4 — 读故事 + 拓扑 → 写数值增量
+          LLM #4a+4b — 读故事 + 拓扑 → 写数值增量
+          LLM #5 — 校验/重试/降级
           GraphEngine — 执行数值增量
         """
         if not self.llm_available or not self._resolver:
             raise RuntimeError("LLM 不可用 — 引擎停止")
 
-        # ─── Step 1: LLM #1 — 拓扑 → 计划 ───
+        # Step 1: LLM #1 — 计划生成（仍保留在 engine 中，Step C 迁移）
         npc_plans, npc_info = await self._build_npc_plans(npcs)
         if not npc_plans:
             return []
-
         logger.info(f"[LLM #1] {len(npc_plans)} 个 NPC 的计划已生成")
 
-        # ─── Step 2: LLM #2 — 计划 + 拓扑 → 拓扑结构变更 ───
-        # 注入 graph_engine 到 adapter
-        self._adapter.set_graph_engine(self.graph_engine)
-
-        intent_resolver = IntentResolver(
-            graph_engine=self.graph_engine,
-            resolver=self._resolver,
+        # Step 2-7: 由 PipelineOrchestrator 编排
+        orchestrator = PipelineOrchestrator(
             adapter=self._adapter,
-        )
-        topology_ops = intent_resolver.resolve_all_intents(npc_plans)
-        logger.info(f"[LLM #2] {len(topology_ops)} 个拓扑结构操作")
-
-        # ─── Step 3: IntentExecutor — 执行拓扑结构变更 ───
-        exec_results = self._execute_intents(topology_ops, npcs, npc_info, npc_plans)
-
-        # ─── Step 4: LLM #3 (InteractionLayer) — 故事生成 ───
-        il = InteractionLayer(resolver=self._resolver, adapter=self._adapter)
-        all_er_dicts = [er for er in exec_results]
-        edge_results = il.process(
-            all_er_dicts,
-            graph_engine=self.graph_engine,
-            world_time_str=self._current_world_time_str,
-            tick_duration_str=self._tick_duration_str,
-        )
-        # 按故事文本去重：同一 Component 的 NPC 共享一个故事，不重复发送给 LLM #4
-        stories = list(dict.fromkeys(e.description for e in edge_results))
-        logger.info(f"[LLM #3] {len(edge_results)} 条边故事 → {len(stories)} 个唯一故事")
-
-        # ─── Step 5a: LLM #4a — 拓扑层操作 (delta / system_delta / recipe) ───
-        pp = PostProcessor(resolver=self._resolver, adapter=self._adapter)
-        topo_ops = pp.resolve_topology_changes(
-            npc_plans=npc_plans,
-            stories=stories,
-            graph_engine=self.graph_engine,
-            world_time_str=self._current_world_time_str,
-            tick_duration_str=self._tick_duration_str,
-        )
-        logger.info(f"[LLM #4a] {len(topo_ops)} 个拓扑操作")
-
-        # 保存供后续使用
-        self._last_delta_ops = topo_ops
-
-        # ═══ 度守恒校验已移至 LLM #5 预写检验层（code=5）═══════
-        # 此处不再有独立过滤步骤。
-        # 若 LLM #5 重试全部耗尽，在下面追加降级过滤。
-
-        # ─── Step 5b: LLM #4b — 内容层操作 (attr + recent_info) ───
-        # 在 #4a 执行之前运行，以便 LLM #5 能同时校验两者
-        attr_ops, recent_info_map = pp.resolve_attr_and_recent(
-            npc_plans=npc_plans,
-            stories=stories,
-            graph_engine=self.graph_engine,
-            world_time_str=self._current_world_time_str,
-            tick_duration_str=self._tick_duration_str,
-        )
-        logger.info(f"[LLM #4b] {len(attr_ops)} attr, {len(recent_info_map)} 条近况")
-
-        # ─── Step 5c: LLM #5 — 纯校验 + 重试 ───
-        vl = VerificationLayer(
             resolver=self._resolver,
-            adapter=self._adapter,
             graph_engine=self.graph_engine,
+            io_dir=self._io_dir or "",
             llm_available=self.llm_available,
         )
+        results = await orchestrator.run_tick(
+            npcs=npcs,
+            plan_map=npc_plans,
+            npc_info=npc_info,
+            world_time_str=self._current_world_time_str,
+            tick_duration_str=self._tick_duration_str,
+        )
 
-        max_retries = get_verification_config("max_retries", 1)
-        # 捕获第一轮原始输出（供重试反馈）
-        first_topo_raw = getattr(pp, "_last_raw_topo_response", "")
-        first_attr_raw = getattr(pp, "_last_raw_attr_response", "")
+        # 给结果打上 tick 编号（orchestrator 不知道 tick_count）
+        for r in results:
+            r["tick"] = self.tick_count
 
-        for attempt in range(max_retries + 1):
-            failures = vl.check_all(stories, topo_ops, attr_ops, recent_info_map)
-            if not failures:
-                logger.info(f"[LLM #5] 校验通过 (attempt {attempt + 1})")
-                break
-
-            if attempt >= max_retries:
-                logger.warning(f"[LLM #5] 已达最大重试次数 ({max_retries})，使用当前输出继续")
-                break
-
-            # 构建反馈（注入第一轮原始输出，供 LLM 精确定位失败操作）
-            feedback = VerificationLayer.build_feedback(
-                failures,
-                previous_topo_output=first_topo_raw,
-                previous_attr_output=first_attr_raw,
-            )
-            logger.warning(f"[LLM #5] 校验失败 ({len(failures)} 项)，重试 #{attempt + 2}")
-
-            topo_ops = pp.resolve_topology_changes(
-                npc_plans=npc_plans,
-                stories=stories,
-                graph_engine=self.graph_engine,
-                world_time_str=self._current_world_time_str,
-                tick_duration_str=self._tick_duration_str,
-                feedback=feedback,
-            )
-            attr_ops, recent_info_map = pp.resolve_attr_and_recent(
-                npc_plans=npc_plans,
-                stories=stories,
-                graph_engine=self.graph_engine,
-                world_time_str=self._current_world_time_str,
-                tick_duration_str=self._tick_duration_str,
-                feedback=feedback,
-            )
-            # 继续循环 → 重新校验
-
-        # ═══ 降级过滤：LLM #5 重试耗尽后，度守恒仍失败 → 静默移除坏操作 ═══
-        if topo_ops:
-            filtered = self._adapter.validate_ops(topo_ops, self.graph_engine)
-            removed = len(topo_ops) - len(filtered)
-            if removed:
-                logger.warning(f"[降级] 度守恒移除 {removed}/{len(topo_ops)} 操作")
-            topo_ops = filtered
-
-        logger.info(f"[LLM #5] 最终: {len(topo_ops)} topo, {len(attr_ops)} attr, {len(recent_info_map)} ri")
-
-        # ─── Step 5d: 执行 #4a 拓扑操作 ───
-        if topo_ops:
-            result = self.graph_engine.apply_edge_operations(topo_ops)
-            logger.info(f"[Engine] #4a 拓扑操作执行: {result['status']}")
-            if result.get("errors"):
-                for err in result["errors"]:
-                    logger.warning(f"[Engine]   增量错误: {err}")
-
-        # ─── Step 5e: 写入近况投影到实体 ───
-        if recent_info_map:
-            from ..config.node_ontology import has_recent_info
-            written = 0
-            for eid, text in recent_info_map.items():
-                ent = self.graph_engine.get_entity(eid)
-                if ent and has_recent_info(ent.type_id):
-                    ent.recent_info = text
-                    written += 1
-            if written:
-                logger.info(f"[LLM #5] 近况投影写入 {written} 个实体")
-
-        # ─── Step 5f: 执行 #4b attr 操作 ───
-        if attr_ops:
-            result = self.graph_engine.apply_edge_operations(attr_ops)
-            logger.info(f"[Engine] #4b attr 执行: {result['status']} ({len(result['results'])} 条)")
-            if result.get("errors"):
-                for err in result["errors"]:
-                    logger.warning(f"[Engine]   增量错误: {err}")
-
-        # ─── 构建返回结果 ───
-        tick_results = []
-        for er_data in exec_results:
-            npc_eid = er_data.get("npc_eid", "")
-            npc_name = er_data.get("npc_name", "?")
-            ent = self.graph_engine.get_entity(npc_eid)
-            zone_now = "?"
-            vitality_now = 100
-            inv_view = {}
-
-            if ent:
-                # 通过 1-hop 子图找当前区域
-                for conn in ent.connected_entity_ids:
-                    e = self.graph_engine.get_entity(conn)
-                    if e and has_role(e.type_id, "region"):
-                        zone_now = e.name
-                        break
-                vitality_now = int(ent.attributes.get("vitality", 100))
-                inv_view = {
-                    iv["item_name"]: iv["quantity"]
-                    for iv in self.graph_engine.get_inventory_view(npc_eid)
-                }
-
-            plan_text = npc_plans.get(npc_eid, npc_name)
-            tick_results.append({
-                "npc_id": er_data.get("npc_id", ""),
-                "npc_name": npc_name,
-                "zone": zone_now,
-                "action": plan_text[:50],
-                "action_text": plan_text,
-                "vitality": vitality_now,
-                "inventory": inv_view,
-                "tick": self.tick_count,
-            })
-
-        return tick_results
+        return results
 
     async def _build_npc_plans(self, npcs) -> tuple[dict[str, str], dict[str, dict]]:
         """

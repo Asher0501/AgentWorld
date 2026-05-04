@@ -130,20 +130,26 @@ class NPCWorldAdapter(DomainAdapter):
         return names
 
     def get_pipeline_stages(self) -> list[PipelineStage]:
+        from ...domain.adapter import StageOutputType
         return [
             PipelineStage(key="plan", label="LLM #1 — Plan Generation",
+                output_type=StageOutputType.PLANS_MAP,
                 prompt_template="llm1_plan",
                 parser=lambda raw, g: self.parse_llm_output(1, raw, None, g)),
             PipelineStage(key="topo_structure", label="LLM #2 — Topology Structure",
+                output_type=StageOutputType.GRAPH_OPS,
                 prompt_template="llm2_structure",
                 parser=lambda raw, g: self.parse_llm_output(2, raw, None, g)),
             PipelineStage(key="narrative", label="LLM #3 — Narrative Generation",
+                output_type=StageOutputType.NARRATIVES,
                 prompt_template="llm3_story",
                 parser=lambda raw, g: self.parse_llm_output(3, raw, None, g)),
             PipelineStage(key="topo_delta", label="LLM #4a — Topology Delta",
+                output_type=StageOutputType.GRAPH_OPS,
                 prompt_template="llm4a_topo",
                 parser=lambda raw, g: self.parse_llm_output(4, raw, None, g)),
             PipelineStage(key="content_update", label="LLM #4b — Content Update",
+                output_type=StageOutputType.ATTR_UPDATE,
                 prompt_template="llm4b_content",
                 parser=lambda raw, g: self.parse_llm_output(5, raw, None, g)),
         ]

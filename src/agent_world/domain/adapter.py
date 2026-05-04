@@ -26,6 +26,17 @@ GraphOp = dict[str, Any]
 StateChange = dict[str, Any]
 
 
+class StageOutputType(Enum):
+    """管线阶段输出类型——告诉引擎如何处理 LLM 返回结果。"""
+    RAW_TEXT = "raw"              # 原始文本，不解析
+    GRAPH_OPS = "graph_ops"        # list[GraphOp]（拓扑操作）
+    PLANS_MAP = "plans_map"        # dict[str, str]（NPC 计划映射）
+    NARRATIVES = "narratives"      # list[str]（故事文本）
+    ATTR_UPDATE = "attr_update"    # StateChange + recent_info 复合
+    VERIFY_RESULT = "verify"       # 校验结果
+    INTENT_EXEC = "intent_exec"     # 非 LLM 意图执行阶段
+
+
 class NodeRole(Enum):
     """已废弃，仅用于桥接兼容。新代码用 NodeClassification。"""
     ACTOR = "actor"
@@ -68,11 +79,16 @@ class SlotDef:
 
 @dataclass
 class PipelineStage:
-    """一个 LLM 阶段的自声明。"""
+    """一个管线阶段的自声明。
+    
+    可以是 LLM 阶段或非 LLM 阶段（INTENT_EXEC）。
+    非 LLM 阶段不需要 prompt_template 和 parser。
+    """
     key: str
     label: str
-    prompt_template: str  # 对应 get_prompt_template(name) 中的 name
-    parser: Callable      # (raw_text, graph) → list[GraphOp]
+    output_type: StageOutputType = StageOutputType.GRAPH_OPS
+    prompt_template: str = ""       # LLM 阶段对应 get_prompt_template(name)
+    parser: Callable = lambda r, g: []  # (raw_text, graph) → 按 output_type 返回
 
 
 @dataclass
