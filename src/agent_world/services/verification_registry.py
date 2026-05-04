@@ -309,6 +309,21 @@ def _check_quantity_accuracy(ctx: dict) -> list[CheckFailure]:
 # ────────────────────────────────────────────────────────
 
 
+
+def _entity_name(ge, eid_or_name: str) -> str:
+    """entity_id → 人类可读名称（供 LLM 反馈用）"""
+    if not eid_or_name:
+        return eid_or_name
+    ent = ge.get_entity(eid_or_name)
+    if ent and ent.name:
+        return ent.name
+    cleaned = eid_or_name.removeprefix("item_").removeprefix("npc_").removeprefix("zone_")
+    ent = ge.find_entity_by_name(cleaned)
+    if ent and ent.name:
+        return ent.name
+    return eid_or_name
+
+
 @register(code=3, name="capacity_upper_bound",
           desc="检查负 delta 输出量是否超过边当前 qty")
 def _check_capacity_upper_bound(ctx: dict) -> list[CheckFailure]:
@@ -332,30 +347,33 @@ def _check_capacity_upper_bound(ctx: dict) -> list[CheckFailure]:
         if delta_val >= 0:
             continue
 
-        src_name = op.get("src", "")
-        tgt_name = op.get("tgt", "")
-        if not src_name or not tgt_name:
+        src_id = op.get("src", "")
+        tgt_id = op.get("tgt", "")
+        if not src_id or not tgt_id:
             continue
 
         needed = abs(delta_val)
-        edge = ge.get_edge_by_name(src_name, tgt_name)
+        edge = ge.get_edge_by_name(src_id, tgt_id)
         current_qty = edge.quantity if edge else 0
 
         if current_qty < needed:
+            # entity_id → 人类可读名称（LLM 一致使用名称）
+            src_display = _entity_name(ge, src_id)
+            tgt_display = _entity_name(ge, tgt_id)
             details = [
                 f"    操作 topo_ops[{i}]: {json.dumps(op, ensure_ascii=False)}",
-                f"    有向边 ({src_name}→{tgt_name}) 当前权值 {current_qty}",
+                f"    有向边 ({src_display}→{tgt_display}) 当前权值 {current_qty}",
                 f"    建议: 减小负 delta 至 ≤ {current_qty} 或移除该操作",
             ]
             # 附加 src 节点出边列表（供 LLM 参考可选路径）
-            out_lines = _format_out_edges(ge, src_name)
+            out_lines = _format_out_edges(ge, src_id)
             if out_lines:
-                details.append(f"    {src_name} 的出边 (权值>0):")
+                details.append(f"    {src_display} 的出边 (权值>0):")
                 details.extend(out_lines)
             failures.append(CheckFailure(
                 code=3,
                 check_name="capacity_upper_bound",
-                message=f"({src_name}→{tgt_name}) 权值 {current_qty} < 负 delta 绝对值 {needed}",
+                message=f"({src_display}→{tgt_display}) 权值 {current_qty} < 负 delta 绝对值 {needed}",
                 details=details,
             ))
     return failures

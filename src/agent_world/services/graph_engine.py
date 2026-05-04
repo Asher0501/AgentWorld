@@ -660,44 +660,57 @@ class GraphEngine:
 
     def build_tagged_topology(
         self, eid_list: list[str],
+        global_label_map: dict[str, str] | None = None,
     ) -> tuple[str, dict[str, str]]:
         """
         构建纯拓扑视角（无内容信息）。
         返回抽象标签（标签）+ 连接的描述，以及 标签→entity_id 映射。
+
+        如果提供了 global_label_map（eid → label），则使用全局一致的标签
+        而非为每个调用单独分配。
         """
         if not eid_list:
             return "", {}
 
-        # 为每个 entity_id 分配抽象标签
-        # 优先从 node_config.json 的 label_mappings 加载
-        from ..config.config_loader import get_all_label_mappings
-        config_labels = get_all_label_mappings()  # {name → label}
-
         label_to_eid: dict[str, str] = {}
         eid_to_label: dict[str, str] = {}
-        used_labels: set[str] = set()
-        for eid in eid_list:
-            ent = self._entities.get(eid)
-            name = ent.name if ent else ""
-            label = config_labels.get(name) if name else None
-            if label and label not in used_labels:
-                label_to_eid[label] = eid
-                eid_to_label[eid] = label
-                used_labels.add(label)
 
-        # 未配置映射的实体动态分配新标签
-        for eid in eid_list:
-            if eid in eid_to_label:
-                continue
-            i = 0
-            while True:
-                label = chr(65 + i)
-                if label not in used_labels:
+        if global_label_map is not None:
+            # 使用全局标签映射（由调用方构建，全图一致）
+            reverse = {v: k for k, v in global_label_map.items()}
+            for eid in eid_list:
+                label = reverse.get(eid)
+                if label:
+                    label_to_eid[label] = eid
+                    eid_to_label[eid] = label
+        else:
+            # 旧行为：为每个调用单独分配标签
+            from ..config.config_loader import get_all_label_mappings
+            config_labels = get_all_label_mappings()  # {name → label}
+
+            used_labels: set[str] = set()
+            for eid in eid_list:
+                ent = self._entities.get(eid)
+                name = ent.name if ent else ""
+                label = config_labels.get(name) if name else None
+                if label and label not in used_labels:
                     label_to_eid[label] = eid
                     eid_to_label[eid] = label
                     used_labels.add(label)
-                    break
-                i += 1
+
+            # 未配置映射的实体动态分配新标签
+            for eid in eid_list:
+                if eid in eid_to_label:
+                    continue
+                i = 0
+                while True:
+                    label = chr(65 + i)
+                    if label not in used_labels:
+                        label_to_eid[label] = eid
+                        eid_to_label[eid] = label
+                        used_labels.add(label)
+                        break
+                    i += 1
 
         lines = []
         # 连接描述

@@ -343,6 +343,10 @@ class GraphNPCEngine:
         )
 
         max_retries = get_verification_config("max_retries", 1)
+        # 捕获第一轮原始输出（供重试反馈）
+        first_topo_raw = getattr(pp, "_last_raw_topo_response", "")
+        first_attr_raw = getattr(pp, "_last_raw_attr_response", "")
+
         for attempt in range(max_retries + 1):
             failures = vl.check_all(stories, topo_ops, attr_ops, recent_info_map)
             if not failures:
@@ -353,8 +357,12 @@ class GraphNPCEngine:
                 logger.warning(f"[LLM #5] 已达最大重试次数 ({max_retries})，使用当前输出继续")
                 break
 
-            # 构建反馈 → 重跑 LLM #4a + #4b
-            feedback = VerificationLayer.build_feedback(failures)
+            # 构建反馈（注入第一轮原始输出，供 LLM 精确定位失败操作）
+            feedback = VerificationLayer.build_feedback(
+                failures,
+                previous_topo_output=first_topo_raw,
+                previous_attr_output=first_attr_raw,
+            )
             logger.warning(f"[LLM #5] 校验失败 ({len(failures)} 项)，重试 #{attempt + 2}")
 
             topo_ops = pp.resolve_topology_changes(

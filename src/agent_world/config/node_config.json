@@ -50,9 +50,8 @@
         "from": "white_orchard",
         "to": [
           "fox_and_goose",
-          "market_square",
-          "herb_garden",
-          "forest"
+          "novigrad",
+          "kaer_morhen"
         ]
       },
       {
@@ -62,23 +61,36 @@
         ]
       },
       {
-        "from": "market_square",
+        "from": "novigrad",
+        "to": [
+          "white_orchard",
+          "oxenfurt",
+          "vizima",
+          "skellige"
+        ]
+      },
+      {
+        "from": "oxenfurt",
+        "to": [
+          "novigrad"
+        ]
+      },
+      {
+        "from": "kaer_morhen",
         "to": [
           "white_orchard"
         ]
       },
       {
-        "from": "herb_garden",
+        "from": "vizima",
         "to": [
-          "white_orchard",
-          "forest"
+          "novigrad"
         ]
       },
       {
-        "from": "forest",
+        "from": "skellige",
         "to": [
-          "white_orchard",
-          "herb_garden"
+          "novigrad"
         ]
       }
     ]
@@ -180,72 +192,77 @@
       {
         "id": "white_orchard",
         "name": "白果园",
-        "type": "zone",
         "zone_type": "white_orchard",
-        "description": "白果园镇的中央空地，紧挨着村子。战争留下的弹坑已经长出了野花，石板路上有人赶着马车经过。公告栏上贴着佣兵招募和寻人启事。",
-        "bounds": {
-          "min_x": 40,
-          "min_y": 40,
-          "max_x": 60,
-          "max_y": 60
-        },
-        "capacity": 20
-      },
-      {
-        "id": "market_square",
-        "name": "集市场",
-        "type": "zone",
-        "zone_type": "market_square",
-        "description": "临时搭建的摊位挤在一起，卓尔坦的矿石摊最显眼，边上还有卖干果、布匹和各色零碎的商贩。讨价还价声不绝于耳，偶尔能听到矮人的歌谣。",
-        "bounds": {
-          "min_x": 60,
-          "min_y": 40,
-          "max_x": 80,
-          "max_y": 60
-        },
-        "capacity": 15
+        "capacity": 20,
+        "connects_to": [
+          "fox_and_goose",
+          "novigrad",
+          "kaer_morhen"
+        ],
+        "description": "泰莫利亚北境的小村庄，战争留下的弹坑长出了野花。"
       },
       {
         "id": "fox_and_goose",
         "name": "狐狸与鹅酒馆",
-        "type": "zone",
-        "zone_type": "fox_and_goose",
-        "description": "白果园最热闹的酒馆，壁炉里烧着柴火，空气中混合着麦酒和炖肉的香气。墙角的竖琴早已走音，但没人计较——酒才是正经事。泥地板上满是脚印，角落里有几个牌友正吵得面红耳赤。",
-        "bounds": {
-          "min_x": 20,
-          "min_y": 40,
-          "max_x": 40,
-          "max_y": 60
-        },
-        "capacity": 12
+        "zone_type": "tavern",
+        "capacity": 15,
+        "connects_to": [
+          "white_orchard"
+        ],
+        "description": "白果园最热闹的酒馆。"
       },
       {
-        "id": "herb_garden",
-        "name": "托蜜拉的草药园",
-        "type": "zone",
-        "zone_type": "herb_garden",
-        "description": "托蜜拉精心打理的草药园，田埂上种满了白屈花、紫菀和甘菊。蜜蜂嗡嗡，泥土湿润。林边的木栅栏上挂着晾干的草束，几只猫在阳光下的草丛里打盹。",
-        "bounds": {
-          "min_x": 0,
-          "min_y": 60,
-          "max_x": 20,
-          "max_y": 80
-        },
-        "capacity": 8
+        "id": "novigrad",
+        "name": "诺维格瑞",
+        "zone_type": "market_square",
+        "capacity": 30,
+        "connects_to": [
+          "white_orchard",
+          "oxenfurt",
+          "vizima",
+          "skellige"
+        ],
+        "description": "北方最大的自由城邦，港口繁忙，商贾云集。"
       },
       {
-        "id": "forest",
-        "name": "白果园森林",
-        "type": "zone",
-        "zone_type": "forest",
-        "description": "茂密的白果园森林，阳光艰难地从树冠缝隙中漏下，洒在铺满落叶的地面上。林中有鹿群和狼群的踪迹，深处藏着水鬼和孽鬼的巢穴。经验丰富的猎魔人才敢独自深入。",
-        "bounds": {
-          "min_x": 0,
-          "min_y": 0,
-          "max_x": 20,
-          "max_y": 20
-        },
-        "capacity": 10
+        "id": "oxenfurt",
+        "name": "奥森弗特",
+        "zone_type": "library",
+        "capacity": 20,
+        "connects_to": [
+          "novigrad"
+        ],
+        "description": "北方最古老的大学城。"
+      },
+      {
+        "id": "kaer_morhen",
+        "name": "凯尔莫罕",
+        "zone_type": "kaer_morhen",
+        "capacity": 10,
+        "connects_to": [
+          "white_orchard"
+        ],
+        "description": "群山之中的猎魔人要塞。"
+      },
+      {
+        "id": "vizima",
+        "name": "维吉玛",
+        "zone_type": "temple",
+        "capacity": 15,
+        "connects_to": [
+          "novigrad"
+        ],
+        "description": "泰莫利亚王国的首都。"
+      },
+      {
+        "id": "skellige",
+        "name": "史凯利格",
+        "zone_type": "harbor",
+        "capacity": 10,
+        "connects_to": [
+          "novigrad"
+        ],
+        "description": "北海群岛的港口。"
       }
     ],
     "items": [
@@ -316,78 +333,35 @@
         "description": "通用货币，红彤彤的克朗，整个北方王国都认这个"
       }
     ],
-    "objects": [
-      {
-        "id": "公告栏",
-        "name": "公告栏",
-        "type": "object",
-        "zone": "white_orchard",
-        "description": "贴满委托和公告的木头栏，有几张是杰洛特贴的收怪广告"
-      },
-      {
-        "id": "壁炉",
-        "name": "壁炉",
-        "type": "object",
-        "zone": "fox_and_goose",
-        "description": "酒馆里的石砌壁炉，柴火烧得噼啪作响"
-      },
-      {
-        "id": "铁砧",
-        "name": "铁砧",
-        "type": "object",
-        "zone": "the_forge",
-        "description": "哈托里用了十几年的铁砧，表面磨得发亮"
-      },
-      {
-        "id": "研钵",
-        "name": "研钵",
-        "type": "object",
-        "zone": "alchemist_hut",
-        "description": "特莉丝用来研磨草药的石研钵，边上散落着草药碎屑"
-      },
-      {
-        "id": "水晶球",
-        "name": "水晶球",
-        "type": "object",
-        "zone": "temple_ruins",
-        "description": "叶奈法的占卜用水晶球，表面流转着微弱的蓝光"
-      },
-      {
-        "id": "篝火",
-        "name": "篝火",
-        "type": "object",
-        "zone": "kaer_morhen",
-        "description": "训练场中央的篝火堆，上面烤着一只野兔"
-      }
-    ],
+    "objects": [],
     "npc_sets": {
       "small": [
-        "乞丐王",
-        "特莉丝",
-        "丹德里恩",
         "凯拉",
+        "乞丐王",
+        "丹德里恩",
         "托蜜拉",
-        "希里",
-        "哈托里",
+        "叶奈法",
         "维瑟米尔",
-        "莎拉",
-        "杰洛特",
+        "哈托里",
+        "特莉丝",
         "卓尔坦",
-        "叶奈法"
+        "莎拉",
+        "希里",
+        "杰洛特"
       ],
       "default": [
-        "杰洛特",
-        "丹德里恩",
-        "希里",
-        "卓尔坦",
-        "哈托里",
-        "特莉丝",
-        "托蜜拉",
-        "莎拉",
-        "叶奈法",
         "凯拉",
         "乞丐王",
-        "维瑟米尔"
+        "丹德里恩",
+        "托蜜拉",
+        "叶奈法",
+        "维瑟米尔",
+        "哈托里",
+        "特莉丝",
+        "卓尔坦",
+        "莎拉",
+        "希里",
+        "杰洛特"
       ]
     },
     "npcs": [

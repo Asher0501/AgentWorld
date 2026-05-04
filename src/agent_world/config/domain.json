@@ -5,8 +5,24 @@
     "interaction_rules": "贴士：同区域的 NPC 可以交互；有数量边(qty)的关系表示持有、产出或消耗。"
   },
   "verification": {
-    "translation_layer_mask": [true, true, false, true, false, false, false],
-    "prewrite_layer_mask": [true, false, true, false, false, false, true],
+    "translation_layer_mask": [
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false
+    ],
+    "prewrite_layer_mask": [
+      true,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true
+    ],
     "check_names": [
       "entity_existence",
       "quantity_accuracy",
@@ -21,71 +37,45 @@
   "zones": [
     {
       "id": "white_orchard",
-      "zone_type": "village",
-      "objects": [
-        {
-          "type": "STALL",
-          "count": 2
-        },
-        {
-          "type": "OVEN"
-        },
-        {
-          "type": "MILL"
-        }
-      ]
-    },
-    {
-      "id": "market_square",
-      "zone_type": "market",
-      "objects": [
-        {
-          "type": "STALL",
-          "count": 4
-        },
-        {
-          "type": "ANVIL"
-        }
-      ]
+      "name": "白果园",
+      "zone_type": "white_orchard",
+      "description": "泰莫利亚北境的小村庄，战争留下的弹坑长出了野花。"
     },
     {
       "id": "fox_and_goose",
+      "name": "狐狸与鹅酒馆",
       "zone_type": "tavern",
-      "objects": [
-        {
-          "type": "BAR_COUNTER",
-          "count": 3
-        },
-        {
-          "type": "BREWING_VAT"
-        }
-      ]
+      "description": "白果园最热闹的酒馆。"
     },
     {
-      "id": "herb_garden",
-      "zone_type": "farm",
-      "objects": [
-        {
-          "type": "FARM_PLOT",
-          "count": 3
-        },
-        {
-          "type": "OVEN"
-        },
-        {
-          "type": "MILL"
-        }
-      ]
+      "id": "novigrad",
+      "name": "诺维格瑞",
+      "zone_type": "market_square",
+      "description": "北方最大的自由城邦，港口繁忙，商贾云集。"
     },
     {
-      "id": "forest",
-      "zone_type": "forest",
-      "objects": [
-        {
-          "type": "FOREST_HUNTING_GROUND",
-          "count": 3
-        }
-      ]
+      "id": "oxenfurt",
+      "name": "奥森弗特",
+      "zone_type": "library",
+      "description": "北方最古老的大学城。"
+    },
+    {
+      "id": "kaer_morhen",
+      "name": "凯尔莫罕",
+      "zone_type": "kaer_morhen",
+      "description": "群山之中的猎魔人要塞。"
+    },
+    {
+      "id": "vizima",
+      "name": "维吉玛",
+      "zone_type": "temple",
+      "description": "泰莫利亚王国的首都。"
+    },
+    {
+      "id": "skellige",
+      "name": "史凯利格",
+      "zone_type": "harbor",
+      "description": "北海群岛的港口。"
     }
   ],
   "recipes": [
@@ -176,17 +166,17 @@
   ],
   "npc_initial_zones": {
     "杰洛特": "white_orchard",
-    "丹德里恩": "fox_and_goose",
-    "希里": "forest",
-    "卓尔坦": "market_square",
-    "哈托里": "market_square",
-    "特莉丝": "herb_garden",
-    "托蜜拉": "herb_garden",
+    "托蜜拉": "white_orchard",
     "莎拉": "fox_and_goose",
-    "叶奈法": "herb_garden",
-    "凯拉": "market_square",
-    "乞丐王": "fox_and_goose",
-    "维瑟米尔": "forest"
+    "丹德里恩": "fox_and_goose",
+    "卓尔坦": "novigrad",
+    "哈托里": "novigrad",
+    "乞丐王": "novigrad",
+    "特莉丝": "oxenfurt",
+    "凯拉": "oxenfurt",
+    "维瑟米尔": "kaer_morhen",
+    "希里": "kaer_morhen",
+    "叶奈法": "vizima"
   },
   "adapter": {
     "survival_needs": "━━━ 基本生存需求 ━━━\n你有3项基本生存属性。任何一项降到0，你都会出局。\n猎魔人的世界不相信眼泪——无论是天球交汇的怪物\n还是饥饿与疲惫，都不会给你第二次机会。\n\n当前: 活力 {v:.0f}/100 | 饱食 {s:.0f}/100 | 心境 {m:.0f}/100\n\n根据你的身份和性格，自己判断：\n  - 你的体力（活力）还能撑多久？\n  - 你的饱腹需要什么时候补充？\n  - 你的心情需要什么来调节——一杯酒？一笔生意？一段冒险？\n\n工作、交易、社交——所有目标都在活下去的前提下进行。\n",

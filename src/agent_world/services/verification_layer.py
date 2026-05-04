@@ -112,9 +112,17 @@ class VerificationLayer:
         return failures
 
     @staticmethod
-    def build_feedback(failures: list[CheckFailure]) -> str:
+    def build_feedback(failures: list[CheckFailure],
+                      previous_topo_output: str = "",
+                      previous_attr_output: str = "") -> str:
         """
         将校验失败列表构建为反馈文本，供 LLM #4 重试时参考。
+
+        Args:
+            failures: 校验失败列表
+            previous_topo_output: LLM #4a 上一轮原始输出（含完整 JSON），
+                                  供 LLM 精确定位失败操作并只修改相关字段
+            previous_attr_output: LLM #4b 上一轮原始输出
 
         设计原则：每个错误码附带拓扑描述 + 具体原因，LLM 通过查错误码表理解问题。
         """
@@ -137,6 +145,23 @@ class VerificationLayer:
             lines.append(f"  → 修正: {info['fix_hint']}")
             for cf in by_code[code]:
                 lines.append(cf.to_llm_feedback())
+            lines.append("")
+
+        # ── 注入 LLM 上一轮输出（供精确定位和部分修正） ──
+        if previous_topo_output:
+            lines.append("===== 你上一轮的拓扑输出（#4a） =====")
+            truncated = previous_topo_output[:2000]
+            lines.append(truncated)
+            if len(previous_topo_output) > 2000:
+                lines.append(f"... ({len(previous_topo_output) - 2000} more chars)")
+            lines.append("")
+
+        if previous_attr_output:
+            lines.append("===== 你上一轮的内容输出（#4b） =====")
+            truncated = previous_attr_output[:2000]
+            lines.append(truncated)
+            if len(previous_attr_output) > 2000:
+                lines.append(f"... ({len(previous_attr_output) - 2000} more chars)")
             lines.append("")
 
         lines += [

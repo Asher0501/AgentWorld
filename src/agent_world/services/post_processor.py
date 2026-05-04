@@ -78,6 +78,7 @@ class PostProcessor:
             return []
 
         raw = self._resolver._call_llm(prompt)
+        self._last_raw_topo_response = raw  # ← 存档供重试用
         if not raw or not raw.strip():
             return []
 
@@ -122,6 +123,7 @@ class PostProcessor:
             return [], {}
 
         raw = self._resolver._call_llm(prompt)
+        self._last_raw_attr_response = raw  # ← 存档供重试用
         if not raw or not raw.strip():
             return [], {}
 
@@ -456,7 +458,15 @@ class PostProcessor:
         return None
 
     def _extract_json(self, text: str) -> str:
-        """从文本中提取 JSON"""
+        """从文本中提取 JSON
+
+        处理顺序：
+        1. markdown ```json...``` 代码块
+        2. 找到第一个 { 或 [，截取到匹配的 } 或 ]
+        3. 找到第一个 { 或 [（跳过前导非 JSON 文本，如 "当前拓扑状态显示...{...}"）
+        4. 兜底返回原文本
+        """
+        # Step 1: markdown code blocks
         if '```' in text:
             blocks = text.split('```')
             for block in blocks:
@@ -465,31 +475,27 @@ class PostProcessor:
                     block = block[4:].strip()
                 if block.startswith('[') or block.startswith('{'):
                     return block
-        stripped = text.lstrip()
-        if stripped.startswith('{'):
+
+        # Step 2: find first '{' or '[' in the text (跳过前导非 JSON 文本)
+        start_idx = -1
+        brace = ''
+        for opener in ('{', '['):
+            idx = text.find(opener)
+            if idx != -1 and (start_idx == -1 or idx < start_idx):
+                start_idx = idx
+                brace = opener
+
+        if start_idx >= 0:
+            close = '}' if brace == '{' else ']'
             stack = []
-            start = -1
-            for i, ch in enumerate(stripped):
-                if ch == '{':
-                    if not stack:
-                        start = i
+            for i in range(start_idx, len(text)):
+                ch = text[i]
+                if ch == brace:
                     stack.append(ch)
-                elif ch == '}':
-                    if stack and stack[-1] == '{':
+                elif ch == close:
+                    if stack:
                         stack.pop()
-                        if not stack and start >= 0:
-                            return stripped[start:i + 1]
-        elif stripped.startswith('['):
-            stack = []
-            start = -1
-            for i, ch in enumerate(stripped):
-                if ch == '[':
-                    if not stack:
-                        start = i
-                    stack.append(ch)
-                elif ch == ']':
-                    if stack and stack[-1] == '[':
-                        stack.pop()
-                        if not stack and start >= 0:
-                            return stripped[start:i + 1]
+                        if not stack:
+                            return text[start_idx:i + 1]
+
         return text

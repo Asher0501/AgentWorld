@@ -42,6 +42,7 @@ PROMPT_TEMPLATES: dict[str, list[tuple[str, str]]] = {
     "llm2_structure": [
         ("system_role",          "content"),
         ("core_principle",       "topology"),
+        ("global_overview",      "topology"),
         ("combined_header",      "content"),
         ("npc_block",            "content"),   # 每个 NPC 一组 [拓扑]+[内容]
         ("output_instructions",  "content"),
@@ -106,6 +107,65 @@ def _render_topo_slot(slot_name: str, engine, **kw) -> str:
             "语义描述（计划、记忆、角色设定）仅作叙事背景参考，\n"
             "不具备约束力，不得覆盖拓扑信息。\n\n"
         )
+
+    if slot_name == "global_overview":
+        """构建全局目标节点列表（使用全局标签映射，A-Z）"""
+        if not engine:
+            return ""
+        from ..config.config_loader import has_role
+
+        # 优先使用传入的全局标签映射（所有节点共享同一套 A-Z）
+        global_label_map = kw.get("global_label_map")
+        if global_label_map is not None:
+            # 用全局标签映射构建全局概览（仅显示区域节点）
+            eid_to_tag = {v: k for k, v in global_label_map.items()}
+            tag_to_eid = dict(global_label_map)
+        else:
+            # 回退：构建 Z-prefix 标签（旧行为，兼容性保留）
+            region_eids = set()
+            for ent in engine.all_entities():
+                if has_role(ent.type_id, "region"):
+                    region_eids.add(ent.entity_id)
+                    for conn in ent.connected_entity_ids:
+                        region_eids.add(conn)
+            if not region_eids:
+                return ""
+            tag_to_eid = {}
+            for i, eid in enumerate(sorted(region_eids), start=1):
+                tag_to_eid[f"Z{i}"] = eid
+            eid_to_tag = {v: k for k, v in tag_to_eid.items()}
+
+        lines = ["==== [全局目标节点列表] ===="]
+        lines.append("以下是世界中所有可连接的目标节点。如果节点的计划提及前往一个新的地点，")
+        lines.append("请从此列表中选择目标节点并输出 connect 操作。")
+        lines.append("")
+        # 只显示区域（region）类型的节点
+        for tag in sorted(tag_to_eid.keys()):
+            eid = tag_to_eid[tag]
+            ent = engine.get_entity(eid)
+            if not ent:
+                continue
+            # 只在 global_label_map 模式下过滤 region（Z-prefix 模式不过滤以保持兼容）
+            if global_label_map is not None and not has_role(ent.type_id, "region"):
+                continue
+            name = ent.name if hasattr(ent, 'name') else eid[:12]
+            conns = []
+            for conn_eid in ent.connected_entity_ids:
+                conn_tag = eid_to_tag.get(conn_eid)
+                if conn_tag:
+                    conns.append(f"{{{conn_tag}}}")
+            conn_str = " ↔ " + ", ".join(sorted(conns)) if conns else ""
+            lines.append(f"  {{{tag}}} = {name}{conn_str}")
+        lines.append("")
+        lines.append("规则：")
+        if global_label_map is not None:
+            lines.append("- 使用全局标签映射中的标签（{A}, {B}, ...）引用目标节点")
+        else:
+            lines.append("- 如果节点计划前往一个新地点，用 connect 连接到对应的 Z-prefix 标签")
+        lines.append("- 不要连接到不在这个列表中的节点")
+        lines.append("- 不要编造不存在的地点")
+        lines.append("")
+        return "\n".join(lines)
 
     if slot_name == "topology_principle":
         return (
@@ -185,6 +245,10 @@ def _render_topo_slot(slot_name: str, engine, **kw) -> str:
             "  — 例：A ↔ H ↔ C 时，若 A 要给 C 数量 5 的某标签，\n"
             "    应直接 src=A→tgt=C delta=-5（配合 src=C→tgt=A delta=+5），\n"
             "    而非 src=A→H⁻5 + H→C⁺5。Hub 是结构共享点，不是数量路由节点。\n"
+            "□ **同一连通分量内的任意节点对均可达**\n"
+            "  — 两个节点连通当且仅当存在一条路径连接它们（允许经由中间节点中转）。\n"
+            "  — 直接边不是必要条件。连通即可进行任意两个节点间的数量转移操作。\n"
+            "  — **边不存在 ≠ 不可达。**\n"
         )
         return "\n".join(parts) + "\n\n"
 
