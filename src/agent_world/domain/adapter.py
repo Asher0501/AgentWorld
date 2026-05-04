@@ -1,309 +1,190 @@
 """
-DomainAdapter — 域适配器接口（抽象层）
+DomainAdapter — 通用域适配器抽象接口。
 
-将图引擎（通用）与 LLM 管线（通用）之间的域特定知识封装在此协议中。
-每个世界观实现一个 DomainAdapter 子类：
+设计原则：
+- 抽象层只提供极简的通用骨肉（节点分类位集、键值配置、阶段声明、校验链注册）
+- 域在实现时填充自己的语义
+- 换域只需写一个新 Adapter 类
 
-    NPCWorldAdapter    → 猎人魔女/奇幻 NPC 世界
-    ProteinAdapter     → 蛋白质互作网络
-    SocialAdapter      → 社交关系网络
-
-核心原则：
-  1. 管线层不知道任何域概念（NPC/Zone/Item），只调用 adapter 方法
-  2. 每个 adapter 自己决定 prompt 模板、解析格式、校验规则
-  3. 换世界观 = 换 adapter class，零图引擎修改
+NodeClassification 用布尔旗替代枚举，让每个域自由组合：
+  is_actor      = 能主动产生操作？（NPC 域：是；蛋白域：否）
+  is_container  = 能装东西？（NPC 域：NPC+区域可以；蛋白域：细胞器可以）
+  is_consumable = 能被消耗？（NPC 域：物品可以；蛋白域：底物可以）
+  is_location   = 是空间位置？（NPC 域：区域可以；蛋白域：细胞器可以）
 """
-
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum, auto
-from typing import Any, Optional
+from enum import Enum
+from typing import Any, Callable, Optional
 
+# ═══════════════════════════════════════════════
+# 跨域通用类型
+# ═══════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════
-# 1. 节点语义角色（域无关）
-# ═══════════════════════════════════════════════════
+GraphOp = dict[str, Any]
+StateChange = dict[str, Any]
+
 
 class NodeRole(Enum):
-    """节点的域无关语义角色"""
-    ACTOR     = auto()  # 能发出意图、采取行动的实体（NPC、蛋白质？）
-    RESOURCE  = auto()  # 被持有/消耗的资源（物品、货币、ATP）
-    LOCATION  = auto()  # 容纳其他节点的容器（区域、细胞器）
-    RELATION  = auto()  # 标记两个节点之间特定关系的标记节点
-
-
-# ═══════════════════════════════════════════════════
-# 2. 统一图操作（域无关）
-# ═══════════════════════════════════════════════════
-
-class OpType(Enum):
-    CONNECT      = auto()  # 建立边
-    DISCONNECT   = auto()  # 移除边
-    SET_QTY      = auto()  # 设置边的数量
-    DELTA        = auto()  # 边的数量增减（守恒对 Σ=0）
-    SYSTEM_DELTA = auto()  # 与系统外部的物品转移（跳过守恒）
-    ATTR         = auto()  # 节点属性变更
+    """已废弃，仅用于桥接兼容。新代码用 NodeClassification。"""
+    ACTOR = "actor"
+    LOCATION = "location"
+    RESOURCE = "resource"
 
 
 @dataclass
-class GraphOp:
-    """域无关的统一图操作"""
-    op: OpType                          # 操作类型
-    src: str                            # 源节点 entity_id
-    tgt: str                            # 目标节点 entity_id
-    qty: float                          # 数量/变化量
-    metadata: dict[str, Any] = field(default_factory=dict)
-    # metadata 承载域特定信息，如：
-    #   {"group": "g1"}        — NPC 交易分组
-    #   {"binding": 0.8}       — 蛋白质结合亲和力
-    #   {"reason": "吃饭了"}   — 属性变更原因
+class NodeClassification:
+    """图引擎需要的粗分类——全部可选布尔旗。"""
+    is_actor: bool = False
+    is_container: bool = False
+    is_consumable: bool = False
+    is_location: bool = False
 
-
-@dataclass
-class StateChange:
-    """状态变更日志（apply_state_updates 的返回值）"""
-    entity_id: str
-    attr: str
-    old_value: Any
-    new_value: Any
-    reason: str = ""
-
-
-# ═══════════════════════════════════════════════════
-# 3. NodeDescriptor — 节点展示描述
-# ═══════════════════════════════════════════════════
 
 @dataclass
 class NodeDescriptor:
-    """节点在 LLM prompt 中的结构化描述"""
-    display_name: str                      # 展示名（如"杰洛特"、"Ras"）
-    type_label: str                        # 类型标签（如"猎魔人"、"GTPase"）
-    attrs: dict[str, Any] = field(default_factory=dict)   # 属性（活力/饱腹等）
-    traits: list[str] = field(default_factory=list)       # 特质标签
-    role: NodeRole = NodeRole.ACTOR        # 语义角色
-    entity_id: str = ""                    # 图节点 ID
+    """节点语义描述，供 LLM prompt 使用。"""
+    display_name: str = ""
+    type_label: str = ""
+    attrs: dict = field(default_factory=dict)
+    role: NodeRole = NodeRole.ACTOR
+    entity_id: str = ""
 
 
-# ═══════════════════════════════════════════════════
-# 4. DomainAdapter — 抽象接口
-# ═══════════════════════════════════════════════════
+@dataclass
+class SlotDef:
+    """Prompt 模板中的槽定义。"""
+    name: str
+    type: str = "content"  # "content" | "topology"
+
+
+@dataclass
+class PipelineStage:
+    """一个 LLM 阶段的自声明。"""
+    key: str
+    label: str
+    prompt_template: str  # 对应 get_prompt_template(name) 中的 name
+    parser: Callable      # (raw_text, graph) → list[GraphOp]
+
+
+@dataclass
+class GraphValidator:
+    """操作校验器。"""
+    name: str
+    check: Callable  # (list[GraphOp], GraphEngine) → list[GraphOp]
+
+
+# ═══════════════════════════════════════════════
+# 抽象接口
+# ═══════════════════════════════════════════════
 
 class DomainAdapter(ABC):
-    """域适配器基类 — 一个世界观的全部领域知识"""
+    """
+    通用域适配器——抽象接口只包含极简通用骨肉。
 
-    # ── 元数据 ────────────────────────────────────
+    换域步骤：
+      1. 继承此类实现所有抽象方法
+      2. 注册你的类型系统（classify_node）
+      3. 声明你的管线（get_pipeline_stages）
+      4. 提供你的模板（get_prompt_template, render_slot）
+      5. 注册你的校验器（get_validators）
+    """
 
     @property
     @abstractmethod
     def domain_name(self) -> str:
-        """域名称，用于日志和调试"""
+        """域标识，如 \"npc_world\", \"protein_network\"."""
         ...
 
-    # ── 实体系统 ───────────────────────────────────
+    # ─── 实体系统 ───
 
     @abstractmethod
-    def get_node_role(self, entity_id: str, graph: "GraphEngine") -> NodeRole:
-        """返回节点的语义角色"""
+    def classify_node(self, entity_id: str, graph) -> NodeClassification:
+        """返回节点的分类位集。GraphEngine 用此判断连接/流转合法性。"""
         ...
 
     @abstractmethod
-    def get_node_descriptor(
-        self, entity_id: str, graph: "GraphEngine"
-    ) -> NodeDescriptor:
-        """返回节点的结构化描述（给 LLM 看）"""
+    def describe_node(self, entity_id: str, graph) -> NodeDescriptor:
+        """返回节点的完整语义描述。LLM prompt 用此格式化节点信息。"""
         ...
 
-    # ── Prompt 构建 ───────────────────────────────
+    # ─── 域配置 ───
 
     @abstractmethod
-    def build_prompt(
-        self,
-        stage: int,
-        context: Any,
-        graph: "GraphEngine",
-        label_map: Optional[dict[str, str]] = None,
-        **kw: Any,
-    ) -> str:
+    def get_config(self, key: str, default=None) -> Any:
         """
-        构建指定 LLM 阶段的 prompt。
+        取域专属配置。每个域定义自己的 key 空间。
 
-        Stages:
-          1 — 意图生成：为每个 ACTOR 生成"下一步计划"
-          2 — 结构变更：计划 → 拓扑连接/断开操作
-          3 — 叙事生成：变更后的子图 → 故事文本
-          4a— 数量变更：故事+拓扑 → 物品/资源增减
-          4b— 属性变更：故事+拓扑 → 节点属性变化
-          5 — 校验验证：操作集 → 合规性校验
-
-        Parameters
-        ----------
-        stage : int
-            LLM 阶段编号 (1-5)
-        context : Any
-            阶段特定的上下文数据
-            stage 1 → entity_id  (当前 ACTOR 的 ID)
-            stage 2 → plans: dict[str, str]  (所有 ACTOR 的计划文本)
-            stage 3 → component: Component  (子图组件)
-            stage 4 → stories: list[Story]  (所有故事)
-            stage 5 → ops: list[GraphOp]    (待校验的操作集)
-        graph : GraphEngine
-            当前图状态
-        label_map : dict[str, str] | None
-            标签 ↔ entity_id 映射（stage 2 必需）
-        **kw
-            域特定扩展参数
-
-        Returns
-        -------
-        str
-            LLM 输入 prompt
+        NPC 域：key="zones" → [zone_dict, ...],
+                key="recipes" → [recipe_dict, ...]
+        蛋白域：key="enzymes" → [enzyme_dict, ...],
+                key="pathways" → [pathway_dict, ...]
         """
         ...
 
-    # ── LLM 输出解析 ─────────────────────────────
+    # ─── LLM 管线自声明 ───
 
     @abstractmethod
-    def parse_llm_output(
-        self,
-        stage: int,
-        raw_text: str,
-        label_map: Optional[dict[str, str]],
-        graph: "GraphEngine",
-    ) -> list[GraphOp]:
+    def get_pipeline_stages(self) -> list[PipelineStage]:
         """
-        将 LLM 原始输出解析为统一 GraphOp 列表。
-
-        Parameters
-        ----------
-        stage : int
-            LLM 阶段编号
-        raw_text : str
-            LLM 返回的原始文本
-        label_map : dict[str, str] | None
-            标签 ↔ entity_id 映射（stage 2 必需）
-        graph : GraphEngine
-            当前图状态
-
-        Returns
-        -------
-        list[GraphOp]
-            解析后的操作列表
-
-        Notes
-        -----
-        解析失败时应返回空列表（不抛异常），
-        让校验层做最终决定，而非卡在解析层抛错。
+        域定义自己的 LLM 管线阶段。
+        管线引擎按此列表顺序执行。
         """
         ...
-
-    # ── 操作校验 ───────────────────────────────────
 
     @abstractmethod
-    def validate_ops(
-        self, ops: list[GraphOp], graph: "GraphEngine"
-    ) -> list[GraphOp]:
+    def get_prompt_template(self, name: str) -> list[SlotDef]:
         """
-        域特定的操作校验 + 修正。
-
-        只返回通过校验的 ops（失败的静默过滤或修正）。
-
-        NPC 世界示例：
-          - 检查 delta 是否守恒（Σ=0）
-          - 检查资源是否充足（src 持有量 ≥ 流出量）
-          - 限制系统 delta 使用场景
-
-        Parameters
-        ----------
-        ops : list[GraphOp]
-            待校验的操作列表
-        graph : GraphEngine
-            当前图状态
-
-        Returns
-        -------
-        list[GraphOp]
-            通过校验的操作列表
+        返回命名模板的 slot 定义列表。
+        PipelineStage.prompt_template 引用此处的 name。
         """
         ...
 
-    # ── 状态更新 ───────────────────────────────────
+    # ─── Slot 渲染 ───
 
     @abstractmethod
-    def apply_state_updates(
-        self, ops: list[GraphOp], graph: "GraphEngine"
-    ) -> list[StateChange]:
-        """
-        将校验通过的 ops 应用到节点属性上。
-
-        NPC 世界示例：
-          OpType.ATTR → 修改 vitality/satiety/mood
-
-        返回变更日志用于叙事生成和校验。
-
-        Parameters
-        ----------
-        ops : list[GraphOp]
-            已通过校验的操作列表
-        graph : GraphEngine
-            当前图状态
-
-        Returns
-        -------
-        list[StateChange]
-            属性变更日志
-        """
+    def render_slot(self, slot_name: str, **kw) -> str:
+        """给定 slot 名和上下文，返回渲染文本。"""
         ...
 
-    # ── 领域规则 ───────────────────────────────────
+    # ─── 校验器 ───
 
-    @property
     @abstractmethod
-    def interaction_rules(self) -> dict[str, Any]:
-        """
-        域特定交互规则配置。
-
-        NPC 世界示例：
-        {
-            "allowed_actor_actor": True,       # NPC 之间可交互
-            "allowed_actor_resource": True,     # NPC 可持有资源
-            "allowed_actor_location": True,     # NPC 可位于区域
-            "allowed_actor_relation": True,     # NPC 可建立关系
-            "chase_distance": 1,               # 追人 BFS 深度
-        }
-
-        Returns
-        -------
-        dict
-            交互规则配置
-        """
+    def get_validators(self) -> list[GraphValidator]:
+        """返回域的所有校验器。管线引擎按需调用。"""
         ...
 
-    @property
-    @abstractmethod
-    def conservation_rules(self) -> dict[str, Any]:
-        """
-        守恒规则配置。
+    # ═══════════════════════════════════════════════
+    # Bridge 方法（已废弃，仅用于 Step 1-2 兼容）
+    # 新代码不要调用。Phase II 删除。
+    # ═══════════════════════════════════════════════
 
-        NPC 世界示例：
-        {
-            "enforce_delta_conservation": True,   # delta 必须 Σ=0
-            "system_delta_allowed": True,         # 允许系统边界转移
-            "check_resource_sufficiency": True,   # 检查资源是否充足
-        }
+    def get_node_role(self, entity_id: str, graph) -> NodeRole:
+        """废弃。用 classify_node() 替代。"""
+        nc = self.classify_node(entity_id, graph)
+        if nc.is_location:
+            return NodeRole.LOCATION
+        if nc.is_consumable:
+            return NodeRole.RESOURCE
+        return NodeRole.ACTOR
 
-        Returns
-        -------
-        dict
-            守恒规则配置
-        """
-        ...
+    def get_node_descriptor(self, entity_id: str, graph) -> NodeDescriptor:
+        """废弃。用 describe_node() 替代。"""
+        return self.describe_node(entity_id, graph)
 
+    def get_zones(self) -> list[dict]:
+        """废弃。用 get_config(\"zones\") 替代。"""
+        return self.get_config("zones", [])
 
-# ═══════════════════════════════════════════════════
-# 5. 类型别名（延迟导入避免循环引用）
-# ═══════════════════════════════════════════════════
+    def get_recipes(self) -> list[dict]:
+        """废弃。用 get_config(\"recipes\") 替代。"""
+        return self.get_config("recipes", [])
 
-# GraphEngine 在 adapter.py 中仅作为类型标注，
-# 实际在子类中通过 `from ..engine.graph_engine import GraphEngine` 导入。
-# 这里不 import，避免循环依赖。
+    def get_npc_initial_zones(self) -> dict[str, str]:
+        """废弃。用 get_config(\"initial_zones\") 替代。"""
+        return self.get_config("initial_zones", {})
+
+    def get_all_entity_names(self) -> set[str]:
+        """废弃。用 get_config(\"entity_names\") 替代。"""
+        return self.get_config("entity_names", set())

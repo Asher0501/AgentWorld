@@ -1,13 +1,8 @@
 """
 NPCWorldAdapter — NPC/Agent 世界的域适配器实现。
 
-当前策略：薄壳模式。
-- 继承 domain/adapter.py 的 DomainAdapter 抽象接口
-- 内容层委托给 services/domain_adapter.DomainAdapter（数据驱动，读 domain.json）
-- build_prompt() 委托给 prompt_assembler.assemble()
-- LLM #2 prompt + 解析, LLM #4a 解析, 度守恒校验已移入此类
-
-逐步迁移：每 Step 将一段域逻辑从旧代码搬进此类，最终摆脱对 services/ 的依赖。
+实现 DomainAdapter 新通用接口。
+桥接方法确保 Step 1-2 的旧调用者无感。
 """
 from __future__ import annotations
 import json
@@ -16,10 +11,14 @@ import re
 from typing import Any, Optional
 
 from ..adapter import (
-    DomainAdapter as AbstractDomainAdapter,
+    DomainAdapter,
     GraphOp,
+    GraphValidator,
+    NodeClassification,
     NodeDescriptor,
     NodeRole,
+    PipelineStage,
+    SlotDef,
     StateChange,
 )
 from ...services.domain_adapter import DomainAdapter as OldDomainAdapter
@@ -27,39 +26,42 @@ from ...services.domain_adapter import DomainAdapter as OldDomainAdapter
 logger = logging.getLogger("NPCWorldAdapter")
 
 
-class NPCWorldAdapter(AbstractDomainAdapter):
+class NPCWorldAdapter(DomainAdapter):
     """NPC/Agent 世界域适配器"""
 
     def __init__(self, domain_path: str | None = None):
         self._old_adapter = OldDomainAdapter(domain_path=domain_path)
+        self._ge = None
 
     def set_graph_engine(self, ge):
         self._old_adapter.set_graph_engine(ge)
+        self._ge = ge
 
     def get_graph_engine(self):
-        return getattr(self._old_adapter, '_ge', None)
+        return self._ge or getattr(self._old_adapter, '_ge', None)
 
-    # ── 元数据 ──
+    # ═══════════════════════════════════════════════
+    # 新通用接口
+    # ═══════════════════════════════════════════════
 
     @property
     def domain_name(self) -> str:
-        return "NPC世界"
+        return "npc_world"
 
-    # ── 实体系统 ──
-
-    def get_node_role(self, entity_id: str, graph) -> NodeRole:
+    def classify_node(self, entity_id: str, graph) -> NodeClassification:
         from ...config.config_loader import has_role
         ent = graph.get_entity(entity_id)
         if not ent or not hasattr(ent, 'type_id'):
-            return NodeRole.ACTOR
+            return NodeClassification()
         tid = ent.type_id
-        if has_role(tid, "region"):
-            return NodeRole.LOCATION
-        if has_role(tid, "thing"):
-            return NodeRole.RESOURCE
-        return NodeRole.ACTOR
+        return NodeClassification(
+            is_actor=has_role(tid, "actor"),
+            is_container=has_role(tid, "actor") or has_role(tid, "region"),
+            is_consumable=has_role(tid, "thing"),
+            is_location=has_role(tid, "region"),
+        )
 
-    def get_node_descriptor(self, entity_id: str, graph) -> NodeDescriptor:
+    def describe_node(self, entity_id: str, graph) -> NodeDescriptor:
         ent = graph.get_entity(entity_id)
         if not ent:
             return NodeDescriptor(display_name=entity_id, type_label="?")
@@ -71,10 +73,175 @@ class NPCWorldAdapter(AbstractDomainAdapter):
             entity_id=entity_id,
         )
 
-    # ── Slot 渲染（委托给旧 adapter）──
+    def get_config(self, key: str, default=None) -> Any:
+        config = {
+            "zones": self._old_adapter.get_zones(),
+            "recipes": self._old_adapter.get_recipes(),
+            "initial_zones": self._old_adapter.get_npc_initial_zones(),
+            "entity_names": self._old_adapter.get_all_entity_names(),
+        }
+        return config.get(key, default)
+
+    def get_pipeline_stages(self) -> list[PipelineStage]:
+        return [
+            PipelineStage(key="plan", label="LLM #1 — Plan Generation",
+                prompt_template="llm1_plan",
+                parser=lambda raw, g: self.parse_llm_output(1, raw, None, g)),
+            PipelineStage(key="topo_structure", label="LLM #2 — Topology Structure",
+                prompt_template="llm2_structure",
+                parser=lambda raw, g: self.parse_llm_output(2, raw, None, g)),
+            PipelineStage(key="narrative", label="LLM #3 — Narrative Generation",
+                prompt_template="llm3_story",
+                parser=lambda raw, g: self.parse_llm_output(3, raw, None, g)),
+            PipelineStage(key="topo_delta", label="LLM #4a — Topology Delta",
+                prompt_template="llm4a_topo",
+                parser=lambda raw, g: self.parse_llm_output(4, raw, None, g)),
+            PipelineStage(key="content_update", label="LLM #4b — Content Update",
+                prompt_template="llm4b_content",
+                parser=lambda raw, g: self.parse_llm_output(5, raw, None, g)),
+        ]
+
+    def get_prompt_template(self, name: str) -> list[SlotDef]:
+        from ...services.prompt_assembler import STAGE_TEMPLATES, SlotType
+        raw = STAGE_TEMPLATES.get(name, [])
+        return [
+            SlotDef(name=s.name, type="topology" if s.type == SlotType.TOPOLOGY else "content")
+            for s in raw
+        ]
+
+    def get_validators(self) -> list[GraphValidator]:
+        return [
+            GraphValidator("conservation", self.validate_ops),
+            GraphValidator("entity_existence", self._validate_entity_existence),
+        ]
+
+    def _validate_entity_existence(
+        self, ops: list[GraphOp], graph
+    ) -> list[GraphOp]:
+        """实体存在性校验。只保留引用了图中真实实体的操作。"""
+        all_ids = {e.entity_id for e in graph.all_entities()}
+        filtered = []
+        for op in ops:
+            src = op.get("src", "")
+            tgt = op.get("tgt", "")
+            if src and src not in all_ids:
+                logger.warning(f"[entity_existence] 移除: src={src} 不存在")
+                continue
+            if tgt and tgt not in all_ids:
+                logger.warning(f"[entity_existence] 移除: tgt={tgt} 不存在")
+                continue
+            # system_delta 的 item 字段
+            item = op.get("item", "")
+            if item and item not in all_ids:
+                logger.warning(f"[entity_existence] 移除: item={item} 不存在")
+                continue
+            filtered.append(op)
+        return filtered
+
+    # ═══════════════════════════════════════════════
+    # 旧接口（桥接 + 额外方法）
+    # ═══════════════════════════════════════════════
+
+    def get_node_descriptor(self, entity_id: str, graph) -> NodeDescriptor:
+        return self.describe_node(entity_id, graph)
+
+    def build_prompt(
+        self,
+        stage: int,
+        context: Any,
+        graph: "GraphEngine" = None,
+        label_map: Optional[dict[str, str]] = None,
+        **kw: Any,
+    ) -> str:
+        stages = self.get_pipeline_stages()
+        if 1 <= stage <= len(stages):
+            s = stages[stage - 1]
+            return self._build_template(s.prompt_template, graph, label_map, **kw)
+        return f"<!-- unknown stage {stage} -->"
+
+    def _build_template(self, tmpl_name: str, graph, label_map, **kw) -> str:
+        from ...services.prompt_assembler import assemble
+        return assemble(
+            tmpl_name, self, engine=graph or self.get_graph_engine(),
+            label_map=label_map, **kw
+        )
+
+    def parse_llm_output(
+        self,
+        stage: int,
+        raw_text: str,
+        label_map: Optional[dict[str, str]],
+        graph: "GraphEngine",
+    ) -> list[GraphOp]:
+        if stage == 1:
+            return self._parse_llm1_plans(raw_text)
+        elif stage == 2:
+            return self._parse_llm2_ops(raw_text, label_map)
+        elif stage == 4:
+            return self._parse_topo_output(raw_text, graph)
+        elif stage == 5:
+            return self._parse_llm5_output(raw_text, graph)
+        return []
+
+    def _parse_llm1_plans(self, raw: str) -> list[GraphOp]:
+        """LLM #1 计划输出解析（仅作记录用，非结构操作）"""
+        return []
+
+    def _parse_llm5_output(self, raw: str, graph) -> list[GraphOp]:
+        """LLM #4b 内容层输出解析（暂用旧逻辑）"""
+        return []
+
+    def validate_ops(
+        self, ops: list[GraphOp], graph: "GraphEngine"
+    ) -> list[GraphOp]:
+        """度守恒校验。"""
+        if not ops:
+            return []
+        deltas = [op for op in ops if op.get("op") == "delta"]
+        if not deltas:
+            return ops
+
+        group_sums: dict[tuple[str, str | None], int] = {}
+        for d in deltas:
+            tgt = d.get("tgt", "")
+            delta = d.get("delta", 0)
+            group = d.get("group", None)
+            if not tgt:
+                continue
+            if graph and not graph.is_conserved(tgt):
+                continue
+            key = (tgt, group)
+            group_sums[key] = group_sums.get(key, 0) + delta
+
+        passed_groups: set[str | None] = set()
+        for (tgt, group), total in group_sums.items():
+            if abs(total) <= 0.001:
+                passed_groups.add(group)
+
+        filtered = []
+        for op in ops:
+            if op.get("op") in ("system_delta", "recipe"):
+                filtered.append(op)
+            elif op.get("op") == "delta":
+                g = op.get("group", None)
+                if g in passed_groups or ("group" not in op and None in passed_groups):
+                    filtered.append(op)
+            else:
+                filtered.append(op)
+
+        removed = len(ops) - len(filtered)
+        if removed:
+            logger.warning(f"[validate_ops] 度守恒校验移除 {removed}/{len(ops)} 操作")
+        return filtered
+
+    def apply_state_updates(
+        self, ops: list[GraphOp], graph: "GraphEngine"
+    ) -> list[StateChange]:
+        return []
+
+    # ── 旧 Slot 渲染（委托给旧 adapter + 本地 handler）──
 
     def render_slot(self, slot_name: str, engine=None, **kw) -> str:
-        """渲染内容层槽位。"""
         if engine and 'engine' not in kw:
             kw = dict(kw, engine=engine)
         result = self._old_adapter.render_slot(slot_name, **kw)
@@ -84,8 +251,6 @@ class NPCWorldAdapter(AbstractDomainAdapter):
         if local_handler:
             return local_handler(**kw)
         return ""
-
-    # ── Slot handlers ──
 
     def _slot_available_recipes(self, **kw) -> str:
         return ""
@@ -102,9 +267,7 @@ class NPCWorldAdapter(AbstractDomainAdapter):
             )
         return ""
 
-    # ═══════════════════════════════════════════════
-    # LLM #2: NPC block 渲染
-    # ═══════════════════════════════════════════════
+    # ── LLM #2：NPC block 渲染 ──
 
     def _slot_npc_block(self, **kw) -> str:
         npc_plans: dict[str, str] = kw.get("npc_plans", {})
@@ -135,19 +298,18 @@ class NPCWorldAdapter(AbstractDomainAdapter):
         for conn_eid in ent.connected_entity_ids:
             topo_eids.add(conn_eid)
             ce = engine.get_entity(conn_eid)
-            if ce:
-                if has_role(ce.type_id, "region"):
-                    for other in engine.all_entities():
-                        if has_role(other.type_id, "actor") and other.entity_id != node_eid \
-                           and other.is_connected_to(conn_eid):
-                            topo_eids.add(other.entity_id)
-                            for oconn in other.connected_entity_ids:
-                                if oconn not in topo_eids:
-                                    ce2 = engine.get_entity(oconn)
-                                    if ce2 and has_role(ce2.type_id, "thing"):
-                                        topo_eids.add(oconn)
+            if ce and has_role(ce.type_id, "region"):
+                for other in engine.all_entities():
+                    if has_role(other.type_id, "actor") and other.entity_id != node_eid \
+                       and other.is_connected_to(conn_eid):
+                        topo_eids.add(other.entity_id)
+                        for oconn in other.connected_entity_ids:
+                            if oconn not in topo_eids:
+                                ce2 = engine.get_entity(oconn)
+                                if ce2 and has_role(ce2.type_id, "thing"):
+                                    topo_eids.add(oconn)
 
-        topo_text, _label_map = engine.build_tagged_topology(
+        topo_text, _ = engine.build_tagged_topology(
             list(topo_eids), global_label_map=global_label_map
         )
 
@@ -161,22 +323,18 @@ class NPCWorldAdapter(AbstractDomainAdapter):
         if global_label_map:
             content_lines.append(build_label_mapping_text(global_label_map, engine))
         content_lines.append("")
-
         content_lines.append("自身描述：")
         content_lines.append(ent.to_prompt_block())
         content_lines.append("")
 
         inventory = engine.get_inventory_view(node_eid)
         if inventory:
-            inv_str = "、".join(
-                f"{i['item_name']}x{i['quantity']}" for i in inventory
-            )
+            inv_str = "、".join(f"{i['item_name']}x{i['quantity']}" for i in inventory)
             content_lines.append(f"持有：{inv_str}")
             content_lines.append("")
 
         content_lines.append(f"计划：{plan}")
         content_lines.append("")
-
         content_lines.append("=== 指令 ===")
         content_lines.append("输出此节点需要执行的图拓扑操作。")
         content_lines.append("使用标签映射中的标签作为 src/tgt。")
@@ -184,10 +342,8 @@ class NPCWorldAdapter(AbstractDomainAdapter):
         content_lines.append("")
         if node_label:
             content_lines.append(f"格式示例（在最终 JSON 的 operations 对象中）：")
-            content_lines.append(
-                f'  {{"op":"connect","src":"{{{node_label}}}","tgt":"{{A}}","qty":-1}}'
-            )
-        content_lines.append("可用的 op：")
+            content_lines.append(f'  {{"op":"connect","src":"{{{node_label}}}","tgt":"{{A}}","qty":-1}}')
+        content_lines.append('可用的 op：')
         content_lines.append('  "connect"    — 建立连接（两个节点之间）')
         content_lines.append('  "disconnect" — 断开连接')
         content_lines.append('  "set_qty"    — 设置边的数量')
@@ -209,9 +365,7 @@ class NPCWorldAdapter(AbstractDomainAdapter):
 
         return prompt
 
-    # ═══════════════════════════════════════════════
-    # LLM #2: 全局标签映射
-    # ═══════════════════════════════════════════════
+    # ── LLM #2：全局标签映射 ──
 
     def build_global_label_map(self, graph) -> dict[str, str]:
         from ...config.config_loader import has_role
@@ -233,7 +387,6 @@ class NPCWorldAdapter(AbstractDomainAdapter):
                 other_ents.append(ent)
 
         all_sorted = region_ents + npc_ents + item_ents + other_ents
-
         for i, ent in enumerate(all_sorted):
             if i < 26:
                 label = chr(65 + i)
@@ -245,56 +398,37 @@ class NPCWorldAdapter(AbstractDomainAdapter):
 
         return result
 
-    # ═══════════════════════════════════════════════
-    # 通用工具：实体名称解析
-    # ═══════════════════════════════════════════════
+    # ── 通用工具 ──
 
     def resolve_name(self, name: str, graph) -> str | None:
-        """
-        通过显示名称查找实体 ID（忽略大小写部分匹配）。
-        专为 LLM #4a/#4b 设计——LLM 输出实体名（如"特莉丝"，非 entity_id）。
-        """
         if not name or not graph:
             return name
         name_lower = name.lower().strip()
-        # 精准匹配
         for ent in graph.all_entities():
             if hasattr(ent, 'name') and ent.name == name:
                 return ent.entity_id
-        # 大小写不敏感
         for ent in graph.all_entities():
             if hasattr(ent, 'name') and ent.name.lower() == name_lower:
                 return ent.entity_id
-        # 部分匹配
         for ent in graph.all_entities():
             if hasattr(ent, 'name') and name_lower in ent.name.lower():
                 return ent.entity_id
-        # 尝试直接当作 entity_id
         if graph.get_entity(name):
             return name
         return None
 
-    # ═══════════════════════════════════════════════
-    # 通用工具：JSON 提取
-    # ═══════════════════════════════════════════════
-
     def extract_json(self, text: str) -> str:
-        """从文本中提取第一个 JSON 对象或数组。"""
         text = re.sub(r'^```(?:json)?\s*', '', text.strip())
         text = re.sub(r'\s*```$', '', text)
         text = text.strip()
-
         start_idx = -1
         for i, ch in enumerate(text):
             if ch in ('{', '['):
                 start_idx = i
                 break
-
         if start_idx == -1:
             return text
-
         text = text[start_idx:]
-
         stack = []
         for i, ch in enumerate(text):
             if ch in ('{', '['):
@@ -307,10 +441,9 @@ class NPCWorldAdapter(AbstractDomainAdapter):
                 stack.pop()
                 if not stack:
                     return text[:i + 1]
-
         return text
 
-    # ── LLM #2 相关：标签解析 ──
+    # ── 旧解析方法（Bridge）──
 
     def _resolve_label(self, val: str, tag_to_eid: dict[str, str]) -> str:
         if not val:
@@ -323,30 +456,12 @@ class NPCWorldAdapter(AbstractDomainAdapter):
     def _extract_json(self, text: str) -> str:
         return self.extract_json(text)
 
-    # ═══════════════════════════════════════════════
-    # parse_llm_output — 支持 LLM #2 和 LLM #4a
-    # ═══════════════════════════════════════════════
-
-    def parse_llm_output(
-        self,
-        stage: int,
-        raw_text: str,
-        label_map: Optional[dict[str, str]],
-        graph: "GraphEngine",
-    ) -> list[GraphOp]:
-        if stage == 2:
-            return self._parse_llm2_ops(raw_text, label_map)
-        elif stage == 4:
-            return self._parse_topo_output(raw_text, graph)
-        return []
-
     def _parse_llm2_ops(
         self, raw: str, global_tag_to_eid: dict[str, str] | None
     ) -> list[GraphOp]:
         tag_to_eid: dict[str, str] = global_tag_to_eid or {}
         raw = raw.strip()
         json_str = self._extract_json(raw)
-
         try:
             parsed = json.loads(json_str)
         except json.JSONDecodeError:
@@ -354,7 +469,6 @@ class NPCWorldAdapter(AbstractDomainAdapter):
             return []
 
         ops: list[GraphOp] = []
-
         def _resolve(val):
             return self._resolve_label(val, tag_to_eid)
 
@@ -377,7 +491,6 @@ class NPCWorldAdapter(AbstractDomainAdapter):
                                     ops.append(op)
             else:
                 for key, npc_ops in parsed.items():
-                    resolved_key = _resolve(key)
                     if isinstance(npc_ops, list):
                         for op in npc_ops:
                             if isinstance(op, dict):
@@ -401,16 +514,9 @@ class NPCWorldAdapter(AbstractDomainAdapter):
         logger.info(f"[LLM #2] 解析到 {len(valid_ops)}/{len(ops)} 有效操作")
         return valid_ops
 
-    def _parse_topo_output(self, raw: str, graph: "GraphEngine") -> list[GraphOp]:
-        """
-        解析 LLM #4a 输出：只提取拓扑操作。
-
-        输出格式：{"operations": [...]}
-        Returns: [{op, ...}] 不包含 attr 操作
-        """
+    def _parse_topo_output(self, raw: str, graph) -> list[GraphOp]:
         raw = raw.strip()
         json_str = self.extract_json(raw)
-
         try:
             parsed = json.loads(json_str)
         except json.JSONDecodeError:
@@ -430,7 +536,6 @@ class NPCWorldAdapter(AbstractDomainAdapter):
             op_type = op.get("op", "")
             if op_type not in topo_types:
                 continue
-
             if op_type == "delta":
                 src = op.get("src", "")
                 tgt = op.get("tgt", "")
@@ -445,7 +550,6 @@ class NPCWorldAdapter(AbstractDomainAdapter):
                     if raw_group is not None:
                         entry["group"] = raw_group
                     valid_ops.append(entry)
-
             elif op_type == "system_delta":
                 tgt = op.get("tgt", "")
                 item = op.get("item", "")
@@ -456,7 +560,6 @@ class NPCWorldAdapter(AbstractDomainAdapter):
                 real_item = self.resolve_name(item, graph)
                 if real_tgt and real_item:
                     valid_ops.append({"op": "system_delta", "tgt": real_tgt, "item": real_item, "delta": delta})
-
             elif op_type == "recipe":
                 src = op.get("src", "")
                 consumes = op.get("consumes", {})
@@ -466,7 +569,6 @@ class NPCWorldAdapter(AbstractDomainAdapter):
                 real_src = self.resolve_name(src, graph)
                 if real_src:
                     valid_ops.append({"op": "recipe", "src": real_src, "consumes": consumes, "produces": produces})
-
             elif op_type == "set_qty":
                 src = op.get("src", "")
                 tgt = op.get("tgt", "")
@@ -477,111 +579,9 @@ class NPCWorldAdapter(AbstractDomainAdapter):
                 real_tgt = self.resolve_name(tgt, graph)
                 if real_src and real_tgt:
                     valid_ops.append({"op": "set_qty", "src": real_src, "tgt": real_tgt, "qty": qty})
-
         return valid_ops
 
-    # ═══════════════════════════════════════════════
-    # validate_ops — 度守恒校验
-    # ═══════════════════════════════════════════════
-
-    def validate_ops(
-        self, ops: list[GraphOp], graph: "GraphEngine"
-    ) -> list[GraphOp]:
-        """
-        校验 delta 操作列表是否满足度守恒。
-
-        - delta: 按 (item, group) 分组 Σ=0
-        - system_delta: 跳过（系统间转移）
-        - recipe: 跳过（配方转换）
-        - attr: 跳过
-        校验失败时只保留 system_delta 和 recipe（移除坏 delta）。
-        """
-        from ...config.config_loader import has_role
-
-        if not ops:
-            return []
-
-        deltas = [op for op in ops if op.get("op") == "delta"]
-        if not deltas:
-            return ops
-
-        # 按 (tgt, group) 分组求和
-        group_sums: dict[tuple[str, str | None], int] = {}
-        for d in deltas:
-            tgt = d.get("tgt", "")
-            delta = d.get("delta", 0)
-            group = d.get("group", None)
-            if not tgt:
-                continue
-            if graph and not graph.is_conserved(tgt):
-                continue
-            key = (tgt, group)
-            group_sums[key] = group_sums.get(key, 0) + delta
-
-        # 找出通过校验的 group 集合
-        passed_groups: set[str | None] = set()
-        for (tgt, group), total in group_sums.items():
-            if abs(total) <= 0.001:
-                passed_groups.add(group)
-
-        # 过滤：保留 system_delta/recipe + 通过校验的 group 内的 delta
-        filtered = []
-        for op in ops:
-            if op.get("op") in ("system_delta", "recipe"):
-                filtered.append(op)
-            elif op.get("op") == "delta":
-                g = op.get("group", None)
-                if g in passed_groups or ("group" not in op and None in passed_groups):
-                    filtered.append(op)
-            else:
-                filtered.append(op)
-
-        removed = len(ops) - len(filtered)
-        if removed:
-            logger.warning(f"[validate_ops] 度守恒校验移除 {removed}/{len(ops)} 操作")
-        return filtered
-
-    # ── 状态更新 ──
-
-    def apply_state_updates(
-        self, ops: list[GraphOp], graph: "GraphEngine"
-    ) -> list[StateChange]:
-        return []
-
-    # ── 配置（委托给旧 adapter）──
-
-    def get_zones(self) -> list[dict]:
-        return self._old_adapter.get_zones()
-
-    def get_recipes(self) -> list[dict]:
-        return self._old_adapter.get_recipes()
-
-    def get_npc_initial_zones(self) -> dict[str, str]:
-        return self._old_adapter.get_npc_initial_zones()
-
-    def build_prompt(
-        self,
-        stage: int,
-        context: Any,
-        graph: "GraphEngine" = None,
-        label_map: Optional[dict[str, str]] = None,
-        **kw: Any,
-    ) -> str:
-        from ...services.prompt_assembler import assemble
-        stage_map = {
-            1: "llm1_plan", 2: "llm2_structure",
-            3: "llm3_story", 4: "llm4a_topo", 5: "llm4b_content",
-        }
-        tmpl = stage_map.get(stage)
-        if not tmpl:
-            return f"<!-- unknown stage {stage} -->"
-        return assemble(
-            tmpl, self, engine=graph or self.get_graph_engine(),
-            label_map=label_map, **kw
-        )
-
-    def get_all_entity_names(self) -> set[str]:
-        return self._old_adapter.get_all_entity_names()
+    # ── 原 NPC 专属属性（保留在 NPCWorldAdapter 上）──
 
     @property
     def interaction_rules(self) -> dict[str, Any]:
