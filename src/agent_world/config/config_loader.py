@@ -154,6 +154,14 @@ def get_all_prefixes() -> list[str]:
     return sorted(_TYPE_PREFIX_TO_ID.keys(), key=len, reverse=True)
 
 
+def try_strip_prefix(raw: str) -> str:
+    """去掉字符串中第一个匹配的已知前缀，没匹配到则返回原字符串。"""
+    for pfx in get_all_prefixes():
+        if raw.startswith(pfx):
+            return raw[len(pfx):]
+    return raw
+
+
 # ─── 标签映射查询 ───
 
 def get_all_label_mappings() -> dict[str, str]:

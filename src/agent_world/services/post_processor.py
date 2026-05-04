@@ -209,8 +209,8 @@ class PostProcessor:
                 story_names.add(name)
         # 也保留 zone 和 item（它们不是 NPC 但需要状态上下文）
         all_ents = graph_engine.all_entities()
-        zone_names = {e.name for e in all_ents if e.type_id == "region"}
-        item_names = {e.name for e in all_ents if e.type_id == "thing"}
+        zone_names = {e.name for e in all_ents if has_role(e.type_id, "region")}
+        item_names = {e.name for e in all_ents if has_role(e.type_id, "thing")}
         active_names = story_names | zone_names | item_names
 
         entities = []
@@ -221,7 +221,7 @@ class PostProcessor:
                 entities.append(ent)
                 active_plans[npc_eid] = npc_plans[npc_eid]
         # 如果过滤后没有 NPC，回退到全部
-        if not any(e.type_id == "actor" for e in entities):
+        if not any(has_role(e.type_id, "actor") for e in entities):
             entities = [graph_engine.get_entity(eid) for eid in npc_plans if graph_engine.get_entity(eid)]
             active_plans = dict(npc_plans)
 
@@ -370,8 +370,9 @@ class PostProcessor:
         return valid_ops, recent_info_map
 
     def _resolve_name(self, name_or_id: str, graph_engine: GraphEngine) -> str | None:
-        """将 NPC 名/物品名 解析为 entity_id"""
-        if name_or_id.startswith("npc_") or name_or_id.startswith("item_"):
+        """将实体名/ID 解析为 entity_id"""
+        from ..config.config_loader import get_all_prefixes
+        if any(name_or_id.startswith(pfx) for pfx in get_all_prefixes()):
             if graph_engine.get_entity(name_or_id):
                 return name_or_id
             _, _, bare_name = name_or_id.partition("_")

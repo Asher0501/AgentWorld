@@ -15,6 +15,14 @@ from __future__ import annotations
 import json
 import logging
 import re
+from ..config.config_loader import get_all_prefixes
+
+
+def _strip_prefix(raw: str) -> str:
+    for pfx in get_all_prefixes():
+        if raw.startswith(pfx):
+            return raw[len(pfx):]
+    return raw
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +260,7 @@ def _check_entity_existence(ctx: dict) -> list[CheckFailure]:
         for name in candidates:
             if not name:
                 continue
-            cleaned = name.removeprefix("item_").removeprefix("npc_")
+            cleaned = _strip_prefix(name)
             if not (ge.get_entity(cleaned) or ge.get_entity(name)
                     or ge.find_entity_by_name(cleaned) is not None):
                 failures.append(CheckFailure(
@@ -317,7 +325,7 @@ def _entity_name(ge, eid_or_name: str) -> str:
     ent = ge.get_entity(eid_or_name)
     if ent and ent.name:
         return ent.name
-    cleaned = eid_or_name.removeprefix("item_").removeprefix("npc_").removeprefix("zone_")
+    cleaned = _strip_prefix(eid_or_name)
     ent = ge.find_entity_by_name(cleaned)
     if ent and ent.name:
         return ent.name
@@ -486,7 +494,7 @@ def _check_degree_conservation(ctx: dict) -> list[CheckFailure]:
         if ent and ent.name:
             return ent.name
         # 去掉 item_ 前缀再查
-        cleaned = eid_or_name.removeprefix("item_").removeprefix("npc_")
+        cleaned = _strip_prefix(eid_or_name)
         ent = ge.find_entity_by_name(cleaned)
         if ent:
             return ent.name
@@ -513,7 +521,7 @@ def _check_degree_conservation(ctx: dict) -> list[CheckFailure]:
         stripped = line.strip()
         if stripped.startswith("  "):
             token = stripped.lstrip().split(":")[0].split()[0]
-            if token and (token.startswith("item_") or token.startswith("npc_")):
+            if token and any(token.startswith(pfx) for pfx in get_all_prefixes()):
                 resolved = _resolve(token)
                 fmt_line = fmt_line.replace(token, resolved, 1)
                 if "❌" in line or "正不平衡" in line:
