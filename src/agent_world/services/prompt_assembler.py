@@ -34,6 +34,7 @@ PROMPT_TEMPLATES: dict[str, list[tuple[str, str]]] = {
         ("inventory",            "content"),
         ("zone_others",          "content"),
         ("available_recipes",    "content"),
+        ("entity_constraints",    "content"),
         ("label_mapping",        "topology"),
         ("topology_constraints_plan", "topology"),
         ("decision_guidance",    "content"),

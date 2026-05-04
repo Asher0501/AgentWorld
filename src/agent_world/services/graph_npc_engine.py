@@ -36,7 +36,7 @@ from .post_processor import PostProcessor
 from .interaction_layer import InteractionLayer
 from .verification_layer import VerificationLayer
 from ..config.config_loader import get_verification_config
-from .domain_adapter import DomainAdapter
+from ..domain.npc_world.adapter import NPCWorldAdapter
 from .prompt_assembler import assemble
 
 
@@ -112,7 +112,7 @@ class GraphNPCEngine:
         self._current_world_time_str = ""
         self._current_time_of_day = ""
         self._tick_duration_str = ""
-        self._adapter = DomainAdapter()
+        self._adapter = NPCWorldAdapter()
 
     def add_listener(self, listener: Callable):
         self._listeners.append(listener)
@@ -517,18 +517,19 @@ class GraphNPCEngine:
                             zone_npcs.append({"name": other_ent.name, "role": other_ent.role or "?"})
                     break
 
-            # 构建 LLM #1 prompt
-            prompt = build_one_npc_prompt(
-                npc_entity=ent,
+            # 构建 LLM #1 prompt（通过 adapter slot 系统）
+            prompt = assemble(
+                "llm1_plan", self._adapter, self.graph_engine,
+                _caller="llm1",
+                entity=ent,
                 npc_name=npc.name,
                 npc_role=ent.role or "",
                 memories=memories,
                 personality_tags=personality_tags,
                 inventory=inv,
                 zone_npcs=zone_npcs,
-                world_time_str=self._current_world_time_str,
-                tick_duration_str=self._tick_duration_str,
-                recipes=None,
+                time_str=self._current_world_time_str,
+                tick_str=self._tick_duration_str,
             )
 
             npc_prompts.append((neid, prompt))
