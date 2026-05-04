@@ -20,6 +20,10 @@ from ..domain.adapter import (
     StageOutputType, PipelineStage, NodeDescriptor,
 )
 from .pipeline_engine import PipelineEngine, StageResult
+from .post_processor import PostProcessor as _PostProcessor
+from .interaction_layer import InteractionLayer as _InteractionLayer
+from .verification_layer import VerificationLayer as _VerificationLayer
+from ..config.config_loader import has_role, get_verification_config
 
 logger = logging.getLogger("PipelineOrchestrator")
 
@@ -83,22 +87,12 @@ class PipelineOrchestrator:
         self.io_dir = io_dir
         self.llm_available = llm_available
         self._engine = PipelineEngine(adapter, resolver, graph_engine, io_dir=io_dir)
-
-        # 延迟导入
-        self._PP: Optional[type] = None
-        self._IL: Optional[type] = None
-        self._VL: Optional[type] = None
-        self._has_role: Optional[Callable] = None
-
-    def _lazy_import(self):
-        if self._PP is not None:
-            return
-        from .post_processor import PostProcessor as PP
-        from .interaction_layer import InteractionLayer as IL
-        from .verification_layer import VerificationLayer as VL
-        from ..config.config_loader import has_role
-        self._PP, self._IL, self._VL = PP, IL, VL
-        self._has_role = has_role
+        self._pp = _PostProcessor(resolver=resolver, adapter=adapter, engine=self._engine)
+        self._il = _InteractionLayer(resolver=resolver, adapter=adapter)
+        self._vl = _VerificationLayer(
+            resolver=resolver, adapter=adapter,
+            graph_engine=graph_engine, llm_available=llm_available,
+        )
 
     def get_timing(self) -> dict[str, float]:
         return self._engine.get_timing()
@@ -124,7 +118,6 @@ class PipelineOrchestrator:
         Returns:
             tick_results: 与旧 _execute_4llm_pipeline 返回格式一致
         """
-        self._lazy_import()
         ctx = PipelineContext()
         ctx.world_time_str = world_time_str
         ctx.tick_duration_str = tick_duration_str
@@ -188,9 +181,9 @@ class PipelineOrchestrator:
             zone_npcs = []
             for conn in ent.connected_entity_ids:
                 e = self.graph_engine.get_entity(conn)
-                if e and self._has_role(e.type_id, "region"):
+                if e and has_role(e.type_id, "region"):
                     for other_ent in self.graph_engine.all_entities():
-                        if self._has_role(other_ent.type_id, "actor") and other_ent != ent \
+                        if has_role(other_ent.type_id, "actor") and other_ent != ent \
                            and other_ent.is_connected_to(e.entity_id):
                             zone_npcs.append({"name": other_ent.name, "role": other_ent.role or "?"})
                     break
@@ -231,7 +224,7 @@ class PipelineOrchestrator:
                 if ent:
                     for conn in ent.connected_entity_ids:
                         e = self.graph_engine.get_entity(conn)
-                        if e and self._has_role(e.type_id, "region"):
+                        if e and has_role(e.type_id, "region"):
                             zone_name = e.name
                             break
                 ctx.plan_map[neid] = f"我在{zone_name}看看有什么可以做的。"
@@ -326,7 +319,7 @@ class PipelineOrchestrator:
             return "?"
         for conn in ent.connected_entity_ids:
             e = self.graph_engine.get_entity(conn)
-            if e and self._has_role(e.type_id, "region"):
+            if e and has_role(e.type_id, "region"):
                 return e.name
         return "?"
 
@@ -337,8 +330,8 @@ class PipelineOrchestrator:
             if tgt == self_eid:
                 continue
             te = self.graph_engine.get_entity(tgt)
-            if te and (self._has_role(te.type_id, "actor")
-                       or self._has_role(te.type_id, "fixture")):
+            if te and (has_role(te.type_id, "actor")
+                       or has_role(te.type_id, "fixture")):
                 names.append(te.name)
         return names
 
@@ -347,8 +340,7 @@ class PipelineOrchestrator:
     # ═══════════════════════════════════════════
 
     def _stage_narrative(self, ctx: PipelineContext) -> list[str]:
-        il = self._IL(resolver=self.resolver, adapter=self.adapter)
-        edge_results = il.process(
+        edge_results = self._il.process(
             [er for er in ctx.exec_results],
             graph_engine=self.graph_engine,
             world_time_str=ctx.world_time_str,
@@ -363,38 +355,30 @@ class PipelineOrchestrator:
     # ═══════════════════════════════════════════
 
     async def _stage_verification_loop(self, ctx: PipelineContext):
-        from ..config.config_loader import get_verification_config
-
         max_retries = get_verification_config("max_retries", 1)
-        pp = self._PP(resolver=self.resolver, adapter=self.adapter, engine=self._engine)
 
         # 第一轮
-        ctx.topo_delta_ops = pp.resolve_topology_changes(
+        ctx.topo_delta_ops = self._pp.resolve_topology_changes(
             npc_plans=ctx.plan_map, stories=ctx.stories,
             graph_engine=self.graph_engine,
             world_time_str=ctx.world_time_str,
             tick_duration_str=ctx.tick_duration_str,
         )
-        ctx.first_topo_raw = getattr(pp, "_last_raw_topo_response", "")
+        ctx.first_topo_raw = getattr(self._pp, "_last_raw_topo_response", "")
         logger.info(f"[LLM #4a] {len(ctx.topo_delta_ops)} 个拓扑操作")
 
-        ctx.attr_ops, ctx.recent_info_map = pp.resolve_attr_and_recent(
+        ctx.attr_ops, ctx.recent_info_map = self._pp.resolve_attr_and_recent(
             npc_plans=ctx.plan_map, stories=ctx.stories,
             graph_engine=self.graph_engine,
             world_time_str=ctx.world_time_str,
             tick_duration_str=ctx.tick_duration_str,
         )
-        ctx.first_attr_raw = getattr(pp, "_last_raw_attr_response", "")
+        ctx.first_attr_raw = getattr(self._pp, "_last_raw_attr_response", "")
         logger.info(f"[LLM #4b] {len(ctx.attr_ops)} attr, {len(ctx.recent_info_map)} 条近况")
 
         # 验证 + 重试
-        vl = self._VL(
-            resolver=self.resolver, adapter=self.adapter,
-            graph_engine=self.graph_engine, llm_available=self.llm_available,
-        )
-
         for attempt in range(max_retries + 1):
-            failures = vl.check_all(
+            failures = self._vl.check_all(
                 ctx.stories, ctx.topo_delta_ops, ctx.attr_ops, ctx.recent_info_map,
             )
             if not failures:
@@ -404,20 +388,20 @@ class PipelineOrchestrator:
                 logger.warning(f"[LLM #5] 已达最大重试次数 ({max_retries})")
                 break
 
-            feedback = self._VL.build_feedback(
+            feedback = self._vl.build_feedback(
                 failures, previous_topo_output=ctx.first_topo_raw,
                 previous_attr_output=ctx.first_attr_raw,
             )
             logger.warning(f"[LLM #5] 校验失败 ({len(failures)} 项)，重试 #{attempt + 2}")
 
-            ctx.topo_delta_ops = pp.resolve_topology_changes(
+            ctx.topo_delta_ops = self._pp.resolve_topology_changes(
                 npc_plans=ctx.plan_map, stories=ctx.stories,
                 graph_engine=self.graph_engine,
                 world_time_str=ctx.world_time_str,
                 tick_duration_str=ctx.tick_duration_str,
                 feedback=feedback,
             )
-            ctx.attr_ops, ctx.recent_info_map = pp.resolve_attr_and_recent(
+            ctx.attr_ops, ctx.recent_info_map = self._pp.resolve_attr_and_recent(
                 npc_plans=ctx.plan_map, stories=ctx.stories,
                 graph_engine=self.graph_engine,
                 world_time_str=ctx.world_time_str,
