@@ -199,7 +199,7 @@ class WorldUpdater:
             npcs = npc_db.get_all_npcs()
 
             # 生成世界事件（时间由 GraphNPCEngine 每 tick 推进 30 分钟）
-            npc_summary = ", ".join([f"{n.name}({n.role.value})" for n in npcs[:5]])
+            npc_summary = ", ".join([f"{n.name}({n.role})" for n in npcs[:5]])
 
             if self.reasoner:
                 events = self._llm_evaluate(world, npc_summary)

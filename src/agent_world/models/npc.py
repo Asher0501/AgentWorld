@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 class NPCRole(str, Enum):
-    """NPC 职业类型"""
+    """NPC 职业类型（Deprecated: 迁移到 data-driven, 由 config node_types 的 roles 定义）"""
     MERCHANT = "merchant"       # 商人
     GUARD = "guard"             # 守卫
     FARMER = "farmer"           # 农民
@@ -60,7 +60,7 @@ class NPC(BaseModel):
     """NPC 数据模型"""
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str = Field(min_length=1, description="NPC 名称，不可为空")
-    role: NPCRole
+    role: str = Field(default="", description="NPC 角色/职业，由 config/domain 定义")
 
     # 等级与属性
     level: int = Field(ge=1, le=100, default=1)

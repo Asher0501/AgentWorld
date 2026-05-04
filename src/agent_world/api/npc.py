@@ -11,14 +11,14 @@ from ..db.schemas import (
     NPCCreate, NPCUpdate, NPCResponse,
     SuccessResponse, ErrorResponse, ListResponse
 )
-from ..models.npc import NPC, NPCRole, NPCStatus
+from ..models.npc import NPC, NPCStatus
 
 router = APIRouter(prefix="/npc", tags=["NPC"])
 
 
 class NPCCreateRequest(BaseModel):
     name: str
-    role: NPCRole
+    role: str
 
 
 class NPCUpdateRequest(BaseModel):

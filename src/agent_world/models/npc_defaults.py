@@ -2,18 +2,7 @@
 NPC 默认数据 — 从 node_config.json 读取，不再维护本地工厂函数。
 """
 
-from .npc import NPC, NPCRole, Position, PhysicalAttributes, PersonaTags
-
-# NPCRole 枚举映射（从 JSON 字符串到 Python 枚举）
-NPC_ROLE_MAP: dict[str, NPCRole] = {
-    "farmer": NPCRole.FARMER,
-    "merchant": NPCRole.MERCHANT,
-    "artisan": NPCRole.ARTISAN,
-    "guard": NPCRole.GUARD,
-    "scholar": NPCRole.SCHOLAR,
-    "healer": NPCRole.HEALER,
-    "wanderer": NPCRole.WANDERER,
-}
+from .npc import NPC, Position, PhysicalAttributes, PersonaTags
 
 
 def _expand_inventory(inv: dict[str, int]) -> list[str]:
@@ -32,7 +21,7 @@ def _make_npc_from_dict(d: dict) -> NPC:
 
     return NPC(
         name=d["name"],
-        role=NPC_ROLE_MAP[d["role"]],
+        role=d["role"],
         position=Position(zone_id=d.get("zone", "village_square")),
         vitality=d.get("vitality", 100.0),
         satiety=d.get("satiety", 50.0),

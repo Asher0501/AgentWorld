@@ -5,7 +5,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from ..models.npc import NPC, NPCRole, NPCStatus
+from ..models.npc import NPC, NPCStatus
 from ..models.world import World, Zone, WorldTime
 
 
@@ -14,7 +14,7 @@ from ..models.world import World, Zone, WorldTime
 class NPCCreate(BaseModel):
     """创建 NPC 的请求 schema"""
     name: str = Field(..., min_length=1, max_length=50)
-    role: NPCRole
+    role: str
 
 
 class NPCUpdate(BaseModel):
@@ -29,7 +29,7 @@ class NPCResponse(BaseModel):
     """NPC 响应 schema"""
     id: str
     name: str
-    role: NPCRole
+    role: str
     level: int
     status: NPCStatus
     position: dict

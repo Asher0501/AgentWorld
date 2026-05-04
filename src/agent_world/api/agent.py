@@ -173,7 +173,7 @@ async def get_npcs(x_api_key: str = Header(...)):
                 {
                     "id": npc.id,
                     "name": npc.name,
-                    "role": npc.role.value,
+                    "role": npc.role,
                     "position": npc.position.model_dump() if hasattr(npc.position, 'model_dump') else npc.position,
                     "level": npc.level,
                     "status": npc.status.value,
@@ -339,7 +339,7 @@ async def act(req: ActRequest, x_api_key: str = Header(...)):
                 )
             
             # 简单的 NPC 对话响应
-            dialogue = f"你好，我是 {npc.name}，是个 {npc.role.value}。"
+            dialogue = f"你好，我是 {npc.name}，是个 {npc.role}。"
             recent_info = npc.attributes.get("_recent_info", "")
             if recent_info:
                 dialogue += f" 最近: {recent_info}"
