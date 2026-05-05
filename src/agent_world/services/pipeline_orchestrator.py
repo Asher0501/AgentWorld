@@ -242,16 +242,17 @@ class PipelineOrchestrator:
 
     async def _stage_topo_structure(self, ctx: PipelineContext):
         self.adapter.set_graph_engine(self.graph_engine)
-        global_label_map = self.adapter.build_global_label_map(self.graph_engine)
+        # 构建 entity_id 恒等映射（标签 = entity_id）
+        id_map = {e.entity_id: e.entity_id for e in self.graph_engine.all_entities()}
         kw = dict(
             npc_plans=ctx.plan_map,
             graph_engine=self.graph_engine,
             world_time_str=ctx.world_time_str,
             tick_duration_str=ctx.tick_duration_str,
-            global_label_map=global_label_map,
+            global_label_map=id_map,
             count=len(ctx.plan_map),
         )
-        result = await self._engine.run_stage("topo_structure", kw, label_map=global_label_map)
+        result = await self._engine.run_stage("topo_structure", kw, label_map=id_map)
         ctx.topo_structure_ops = result.ops
         logger.info(f"[LLM #2] {len(ctx.topo_structure_ops)} 个拓扑结构操作")
 

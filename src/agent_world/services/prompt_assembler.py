@@ -30,65 +30,39 @@ def _render_topo_slot(slot_name: str, engine, **kw) -> str:
         )
 
     if slot_name == "global_overview":
-        """构建全局目标节点列表（使用全局标签映射，A-Z）"""
+        """构建全局目标节点列表（使用 entity_id 恒等标签）"""
         if not engine:
             return ""
         from ..config.config_loader import has_role
 
-        # 优先使用传入的全局标签映射（所有节点共享同一套 A-Z）
-        global_label_map = kw.get("global_label_map")
-        if global_label_map is not None:
-            # 用全局标签映射构建全局概览（仅显示区域节点）
-            eid_to_tag = {v: k for k, v in global_label_map.items()}
-            tag_to_eid = dict(global_label_map)
-        else:
-            # 回退：构建 Z-prefix 标签（旧行为，兼容性保留）
-            region_eids = set()
-            for ent in engine.all_entities():
-                if has_role(ent.type_id, "region"):
-                    region_eids.add(ent.entity_id)
-                    for conn in ent.connected_entity_ids:
-                        region_eids.add(conn)
-            if not region_eids:
-                return ""
-            tag_to_eid = {}
-            for i, eid in enumerate(sorted(region_eids), start=1):
-                tag_to_eid[f"Z{i}"] = eid
-            eid_to_tag = {v: k for k, v in tag_to_eid.items()}
+        # 筛选区域节点，构建恒等标签映射
+        region_eids = set()
+        for ent in engine.all_entities():
+            if has_role(ent.type_id, "region"):
+                region_eids.add(ent.entity_id)
+                for conn in ent.connected_entity_ids:
+                    region_eids.add(conn)
+        if not region_eids:
+            return ""
+        tag_to_eid = {eid: eid for eid in sorted(region_eids)}
 
         lines = ["==== [全局目标节点列表] ===="]
         lines.append("以下是世界中所有可连接的目标节点。如果节点的计划提及前往一个新的地点，")
         lines.append("请从此列表中选择目标节点并输出 connect 操作。")
         lines.append("")
-        # 只显示区域（region）类型的节点
         for tag in sorted(tag_to_eid.keys()):
             eid = tag_to_eid[tag]
             ent = engine.get_entity(eid)
             if not ent:
                 continue
-            # 只在 global_label_map 模式下过滤 region（Z-prefix 模式不过滤以保持兼容）
-            if global_label_map is not None and not has_role(ent.type_id, "region"):
-                continue
-            name = ent.name if hasattr(ent, 'name') else eid[:12]
-            # 展示 zone_type（帮助 LLM 理解区域功能）
             zt = ent.attributes.get("zone_type", "") if hasattr(ent, 'attributes') else ""
-            if zt:
-                type_hint = f" ({zt})"
-            else:
-                type_hint = ""
-            conns = []
-            for conn_eid in ent.connected_entity_ids:
-                conn_tag = eid_to_tag.get(conn_eid)
-                if conn_tag:
-                    conns.append(f"{{{conn_tag}}}")
-            conn_str = " ↔ " + ", ".join(sorted(conns)) if conns else ""
-            lines.append(f"  {{{tag}}} = {name}{type_hint}{conn_str}")
+            type_hint = f" ({zt})" if zt else ""
+            conns = [f"{{{c}}}" for c in sorted(ent.connected_entity_ids)]
+            conn_str = " ↔ " + ", ".join(conns) if conns else ""
+            lines.append(f"  {{{tag}}} = {ent.name}{type_hint}{conn_str}")
         lines.append("")
         lines.append("规则：")
-        if global_label_map is not None:
-            lines.append("- 使用全局标签映射中的标签（{A}, {B}, ...）引用目标节点")
-        else:
-            lines.append("- 如果节点计划前往一个新地点，用 connect 连接到对应的 Z-prefix 标签")
+        lines.append("- 使用标签 {entity_id} 引用目标节点")
         lines.append("- 不要连接到不在这个列表中的节点")
         lines.append("- 不要编造不存在的地点")
         lines.append("")

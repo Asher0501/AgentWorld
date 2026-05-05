@@ -34,7 +34,7 @@ def _has_role(tid: str, role: str) -> bool:
 
 
 def _parse_topostruct_ops(raw: str, label_map: dict[str, str]) -> list[GraphOp]:
-    """解析 LLM #2 输出，用 label_map 将单字母标签 {A} 解析回 entity_id。"""
+    """解析 LLM #2 输出，用 label_map 将 {entity_id} 解析回 entity_id。"""
     tag_to_eid = dict(label_map)
 
     def _resolve(val):
@@ -807,7 +807,7 @@ class NPCWorldAdapter(DomainAdapter):
         content_lines.append("")
         if node_label:
             content_lines.append("格式示例（在最终 JSON 的 operations 对象中）：")
-            content_lines.append(f'  {{"op":"connect","src":"{{{node_label}}}","tgt":"{{A}}","qty":-1}}')
+            content_lines.append(f'  {{"op":"connect","src":"{{{node_label}}}","tgt":"{{{conn_eid}}}","qty":-1}}')
         content_lines.append('可用的 op：')
         content_lines.append('  "connect"    — 建立连接（两个节点之间）')
         content_lines.append('  "disconnect" — 断开连接')
@@ -833,35 +833,8 @@ class NPCWorldAdapter(DomainAdapter):
     # ── LLM #2：全局标签映射 ──
 
     def build_global_label_map(self, graph) -> dict[str, str]:
-        """构建单字母标签 → entity_id 映射，供 prompt 展示和 parser 解析。"""
-        result: dict[str, str] = {}
-        region_ents = []
-        npc_ents = []
-        item_ents = []
-        other_ents = []
-        for ent in graph.all_entities():
-            if not hasattr(ent, 'type_id'):
-                other_ents.append(ent)
-            elif _has_role(ent.type_id, "region"):
-                region_ents.append(ent)
-            elif _has_role(ent.type_id, "actor"):
-                npc_ents.append(ent)
-            elif _has_role(ent.type_id, "thing"):
-                item_ents.append(ent)
-            else:
-                other_ents.append(ent)
-
-        all_sorted = region_ents + npc_ents + item_ents + other_ents
-        for i, ent in enumerate(all_sorted):
-            if i < 26:
-                label = chr(65 + i)
-            elif i < 52:
-                label = chr(97 + i - 26)
-            else:
-                label = chr(65 + (i - 26) // 26) + chr(65 + (i - 26) % 26)
-            result[label] = ent.entity_id
-
-        return result
+        """构建恒等标签映射（entity_id → entity_id），作为单字母标签的替代。"""
+        return {e.entity_id: e.entity_id for e in graph.all_entities()}
 
     # ── 通用工具 ──
 
@@ -911,12 +884,13 @@ class NPCWorldAdapter(DomainAdapter):
     # ── 旧解析方法 ──
 
     def _resolve_label(self, val: str, tag_to_eid: dict[str, str]) -> str:
+        """将标签解析回 entity_id。兼容 {entity_id} 和 entity_id 两种格式。"""
         if not val:
             return val
         stripped = val.strip("{}")
         if stripped in tag_to_eid:
             return tag_to_eid[stripped]
-        return val
+        return stripped
 
     def _extract_json(self, text: str) -> str:
         return self.extract_json(text)
@@ -982,10 +956,13 @@ class NPCWorldAdapter(DomainAdapter):
 
     @staticmethod
     def _resolve_tag(val: str, label_map: dict[str, str] | None) -> str:
-        """将标签 {X} 解析为 entity_id。非标签格式原样返回。"""
-        if label_map and isinstance(val, str) and len(val) == 3 and val[0] == '{' and val[2] == '}' and val[1].isalpha():
-            return label_map.get(val[1], val)
-        return val
+        """将标签 {entity_id} 解析为 entity_id。兼容有/无括号格式。"""
+        if not val:
+            return val
+        stripped = val.strip("{}")
+        if label_map and stripped in label_map:
+            return label_map[stripped]
+        return stripped
 
     def _parse_topo_output(self, raw: str, graph, label_map: dict[str, str] | None = None) -> list[GraphOp]:
         raw = raw.strip()
@@ -1003,7 +980,7 @@ class NPCWorldAdapter(DomainAdapter):
         else:
             return []
 
-        # 标签 → entity_id 解析（如 {A} → npc_a1b2c3d4）
+        # 标签 → entity_id 解析（如 {npc_xxx} → npc_xxx）
         _tag = lambda v: self._resolve_tag(v, label_map)
 
         topo_types = {"delta", "system_delta", "recipe", "set_qty"}

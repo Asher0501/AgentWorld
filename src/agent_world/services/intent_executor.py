@@ -56,26 +56,26 @@ class IntentResolver:
         if self._adapter is None:
             return self._fallback_old(npc_plans)
 
-        # 1. 全局标签映射 → 域适配器
-        global_label_map = self._adapter.build_global_label_map(self._graph)
+        # 1. 构建 entity_id 恒等标签映射
+        id_map = {e.entity_id: e.entity_id for e in self._graph.all_entities()}
 
         # 2. 构建 prompt → 域适配器（通过 prompt_assembler slot 系统）
         from .prompt_assembler import assemble
 
         prompt_text = assemble(
             "llm2_structure", self._adapter, engine=self._graph,
-            npc_plans=npc_plans, global_label_map=global_label_map,
+            npc_plans=npc_plans, global_label_map=id_map,
             count=len(npc_plans), _caller="llm2",
         )
 
         # 3. 调用 LLM
         raw = self._call_llm(prompt_text) if self._resolver else ""
         if not raw:
-            return self._fallback_items(npc_plans, global_label_map)
+            return self._fallback_items(npc_plans, id_map)
 
         # 4. 解析 → 域适配器
         return self._adapter.parse_llm_output(
-            stage=2, raw_text=raw, label_map=global_label_map, graph=self._graph,
+            stage=2, raw_text=raw, label_map=id_map, graph=self._graph,
         )
 
     def _call_llm(self, prompt: str) -> str:
@@ -87,16 +87,9 @@ class IntentResolver:
     # ─── 降级（无 adapter / LLM 不可用）───
 
     def _fallback_old(self, npc_plans: dict[str, str]) -> list[EdgeOperation]:
-        """无 adapter 时的回退：构建全局标签并走旧路径"""
-        from ...config.config_loader import has_role
-
-        # 简易全局标签
-        global_label_map = {}
-        for ent in self._graph.all_entities():
-            if has_role(ent.type_id, "region"):
-                global_label_map[ent.entity_id] = ent.entity_id
-
-        return self._fallback_items(npc_plans, global_label_map)
+        """无 adapter 时的回退：使用 entity_id 恒等映射"""
+        id_map = {e.entity_id: e.entity_id for e in self._graph.all_entities()}
+        return self._fallback_items(npc_plans, id_map)
 
     def _fallback_items(
         self, npc_plans: dict[str, str], global_label_map: dict[str, str]

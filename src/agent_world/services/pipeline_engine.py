@@ -141,7 +141,7 @@ class PipelineEngine:
         """解析阶段 LLM 输出 → GraphOps。
 
         对于需要标签解析的阶段（如 topo_structure），传入 label_map
-        以便将 LLM 输出的单字母标签 {A} 解析回实体 ID。
+        以便将 LLM 输出的标签 {entity_id} 解析回实体 ID。
         """
         stage = self._stages.get(stage_key)
         if not stage:

@@ -683,27 +683,18 @@ class GraphEngine:
         构建纯拓扑视角（无内容信息）。
         返回抽象标签（标签）+ 连接的描述，以及 标签→entity_id 映射。
 
-        如果提供了 global_label_map（eid → label），则使用全局一致的标签
-        而非为每个调用单独分配。
+        使用 entity_id 直接作为标签（恒等映射），不分配单字母 A-Z 标签。
+        global_label_map 参数保留兼容但不再使用。
         """
         if not eid_list:
             return "", {}
 
+        # 直接用 entity_id 做标签（恒等映射）
         label_to_eid: dict[str, str] = {}
         eid_to_label: dict[str, str] = {}
-
-        if global_label_map is not None:
-            # 使用全局标签映射（entity_id → entity_id 恒等映射）
-            for eid in eid_list:
-                label = global_label_map.get(eid)
-                if label:
-                    label_to_eid[label] = eid
-                    eid_to_label[eid] = label
-        else:
-            # 默认：直接用 entity_id 做标签（无需中间映射）
-            for eid in eid_list:
-                label_to_eid[eid] = eid
-                eid_to_label[eid] = eid
+        for eid in eid_list:
+            label_to_eid[eid] = eid
+            eid_to_label[eid] = eid
 
         lines = []
         # 连接描述（检查 connected_entity_ids 判断方向）
@@ -1009,12 +1000,12 @@ def build_label_mapping_text(
     """
     从 label_map 渲染标准化的标签映射文本。
 
-    输出格式：{A} = 可读名称 → entity_id [type] (tag)
+    输出格式：{entity_id} = 可读名称 [type] (tag)
     include_tags=True 时追加 conserved/terminal 标记
     include_type=True 时追加 type 信息
 
     所有 LLM prompt 的映射表由此一处生成，换映射格式只改这里。
-    标签按 node_config.json 中 label_mappings.labels[] 的顺序排序。
+    标签按 entity_id 字母序排序。
     """
     # 按 entity_id 字母序排序（entity_id 就是 label）
     lines = []
