@@ -19,7 +19,7 @@ from typing import Any
 from agent_world.config.node_ontology import (
     prefix_to_type_id_wrap as _prefix_to_tid,
     is_terminal,
-    get_ontology,
+    is_same_type_blocked as _same_type_blocked,
 )
 from agent_world.config.config_loader import get_type_def as _get_type_def
 
@@ -73,8 +73,7 @@ class Entity:
     @property
     def no_same_type(self) -> bool:
         """同类型阻断标志：BFS 不跨同类型节点。由 node_ontology 配置决定。"""
-        onto = get_ontology(self.type_id)
-        return bool(onto.get("same_type_block", False))
+        return _same_type_blocked(self.type_id)
 
     def connect_to(self, entity_id: str):
         """添加有向连接"""

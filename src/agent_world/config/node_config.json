@@ -347,7 +347,8 @@
         "卓尔坦",
         "莎拉",
         "希里",
-        "杰洛特"
+        "杰洛特",
+        "市集商贩"
       ],
       "default": [
         "凯拉",
@@ -361,7 +362,8 @@
         "卓尔坦",
         "莎拉",
         "希里",
-        "杰洛特"
+        "杰洛特",
+        "市集商贩"
       ]
     },
     "npcs": [
@@ -477,7 +479,7 @@
       {
         "name": "卓尔坦",
         "role": "merchant",
-        "zone": "market_square",
+        "zone": "novigrad",
         "vitality": 100,
         "satiety": 55,
         "mood": 60,
@@ -514,7 +516,7 @@
       {
         "name": "哈托里",
         "role": "artisan",
-        "zone": "the_forge",
+        "zone": "novigrad",
         "vitality": 95,
         "satiety": 50,
         "mood": 55,
@@ -548,7 +550,7 @@
       {
         "name": "特莉丝",
         "role": "healer",
-        "zone": "alchemist_hut",
+        "zone": "oxenfurt",
         "vitality": 85,
         "satiety": 50,
         "mood": 60,
@@ -585,7 +587,7 @@
       {
         "name": "托蜜拉",
         "role": "farmer",
-        "zone": "herb_garden",
+        "zone": "white_orchard",
         "vitality": 90,
         "satiety": 55,
         "mood": 65,
@@ -654,7 +656,7 @@
       {
         "name": "叶奈法",
         "role": "farmer",
-        "zone": "temple_ruins",
+        "zone": "vizima",
         "vitality": 80,
         "satiety": 50,
         "mood": 70,
@@ -725,7 +727,7 @@
       {
         "name": "乞丐王",
         "role": "guard",
-        "zone": "harbor",
+        "zone": "novigrad",
         "vitality": 90,
         "satiety": 60,
         "mood": 65,
@@ -793,6 +795,44 @@
           ],
           "special_traits": [
             "狼学派"
+          ]
+        }
+      },
+      {
+        "name": "市集商贩",
+        "role": "merchant",
+        "zone": "vizima",
+        "vitality": 70,
+        "satiety": 65,
+        "mood": 55,
+        "inventory": {
+          "食物": 20,
+          "酒": 5,
+          "金币": 15
+        },
+        "recent_info": "在维吉玛旧神殿区的市场摆摊，卖些面包干粮和自家酿的淡酒。平时话不多但价钱公道，街坊们都认识他。",
+        "physical": {
+          "energy_capacity": 80,
+          "health": 70,
+          "recovery_speed": 1.0,
+          "age": 40
+        },
+        "persona": {
+          "work_ethic": "勤劳",
+          "social_class": "小贩",
+          "reputation": "可靠",
+          "interests": [
+            "赶集",
+            "算账",
+            "听八卦"
+          ],
+          "personality": [
+            "踏实",
+            "寡言",
+            "精打细算"
+          ],
+          "special_traits": [
+            "本地人"
           ]
         }
       }

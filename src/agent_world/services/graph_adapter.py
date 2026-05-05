@@ -11,7 +11,7 @@ import uuid
 from typing import Any
 
 from ..entities.base_entity import Entity
-from ..config.config_loader import has_role, get_domain_npc_zones
+from ..config.config_loader import has_role
 
 logger = logging.getLogger(__name__)
 
@@ -176,14 +176,11 @@ def init_graph_edges_from_adapter(ge, npcs: list, zones: list):
     zone_lookup = _build_zone_lookup(zones)
 
     # 从 domain.json 读取 NPC 初始区域（作为 DB 位置缺失时的后备）
-    domain_zones = get_domain_npc_zones()
-
     for cfg in npcs:
         npc_eid = _make_eid("npc", cfg.name)
 
         # NPC → 区域（位置）
-        # 优先级: DB position > domain.json (只有首次运行或DB未更新时用domain)
-        zone_key = _get_zone_for(cfg) or domain_zones.get(cfg.name)
+        zone_key = _get_zone_for(cfg)
         if zone_key:
             zone_eid = _resolve_zone_eid(ge, zone_key, zone_lookup)
             if zone_eid:

@@ -40,7 +40,7 @@ def _get_zone_name(entity, ge) -> str:
             e = ge.get_entity(conn)
             if e and _has_role(e.type_id, "region"):
                 return e.name
-    from ..config.node_ontology import prefix_to_type_id
+    from ...config.node_ontology import prefix_to_type_id
     for conn in entity.connected_entity_ids:
         tid = prefix_to_type_id(conn)
         if tid and _has_role(tid, "region"):
@@ -311,7 +311,7 @@ class NPCWorldAdapter(DomainAdapter):
         elif stage == 2:
             return self._parse_llm2_ops(raw_text, label_map)
         elif stage == 4:
-            return self._parse_topo_output(raw_text, graph)
+            return self._parse_topo_output(raw_text, graph, label_map=label_map)
         elif stage == 5:
             return self._parse_llm5_output(raw_text, graph)
         return []
@@ -439,8 +439,22 @@ class NPCWorldAdapter(DomainAdapter):
         if not entity:
             return ""
         if entity.recent_info:
+            import json as _json
+            lines = []
+            raw = entity.recent_info
+            try:
+                history = _json.loads(raw)
+                if isinstance(history, list):
+                    for entry in history:
+                        t = entry.get("t", "")
+                        txt = entry.get("text", "")
+                        if txt:
+                            lines.append(f"  [{t}] {txt}" if t else f"  {txt}")
+            except (_json.JSONDecodeError, TypeError):
+                lines.append(f"  {raw}")
+            info = "\n".join(lines)
             template = self._adapter_data.get("recent_info_default", "")
-            return template.format(info=entity.recent_info)
+            return template.format(info=info)
         if memories:
             parts = ["### 最近经历"]
             for entry in memories[:5]:
@@ -883,7 +897,14 @@ class NPCWorldAdapter(DomainAdapter):
         logger.info(f"[LLM #2] 解析到 {len(valid_ops)}/{len(ops)} 有效操作")
         return valid_ops
 
-    def _parse_topo_output(self, raw: str, graph) -> list[GraphOp]:
+    @staticmethod
+    def _resolve_tag(val: str, label_map: dict[str, str] | None) -> str:
+        """将标签 {X} 解析为 entity_id。非标签格式原样返回。"""
+        if label_map and isinstance(val, str) and len(val) == 3 and val[0] == '{' and val[2] == '}' and val[1].isalpha():
+            return label_map.get(val[1], val)
+        return val
+
+    def _parse_topo_output(self, raw: str, graph, label_map: dict[str, str] | None = None) -> list[GraphOp]:
         raw = raw.strip()
         json_str = self.extract_json(raw)
         try:
@@ -899,6 +920,9 @@ class NPCWorldAdapter(DomainAdapter):
         else:
             return []
 
+        # 标签 → entity_id 解析（如 {A} → npc_a1b2c3d4）
+        _tag = lambda v: self._resolve_tag(v, label_map)
+
         topo_types = {"delta", "system_delta", "recipe", "set_qty"}
         valid_ops = []
         for op in ops:
@@ -906,8 +930,8 @@ class NPCWorldAdapter(DomainAdapter):
             if op_type not in topo_types:
                 continue
             if op_type == "delta":
-                src = op.get("src", "")
-                tgt = op.get("tgt", "")
+                src = _tag(op.get("src", ""))
+                tgt = _tag(op.get("tgt", ""))
                 delta = op.get("delta", 0)
                 if not src or not tgt or delta == 0:
                     continue
@@ -920,8 +944,8 @@ class NPCWorldAdapter(DomainAdapter):
                         entry["group"] = raw_group
                     valid_ops.append(entry)
             elif op_type == "system_delta":
-                tgt = op.get("tgt", "")
-                item = op.get("item", "")
+                tgt = _tag(op.get("tgt", ""))
+                item = _tag(op.get("item", ""))
                 delta = op.get("delta", 0)
                 if not tgt or not item or delta == 0:
                     continue
@@ -930,17 +954,17 @@ class NPCWorldAdapter(DomainAdapter):
                 if real_tgt and real_item:
                     valid_ops.append({"op": "system_delta", "tgt": real_tgt, "item": real_item, "delta": delta})
             elif op_type == "recipe":
-                src = op.get("src", "")
-                consumes = op.get("consumes", {})
-                produces = op.get("produces", {})
+                src = _tag(op.get("src", ""))
+                consumes = {_tag(k): v for k, v in op.get("consumes", {}).items()}
+                produces = {_tag(k): v for k, v in op.get("produces", {}).items()}
                 if not src or not consumes or not produces:
                     continue
                 real_src = self.resolve_name(src, graph)
                 if real_src:
                     valid_ops.append({"op": "recipe", "src": real_src, "consumes": consumes, "produces": produces})
             elif op_type == "set_qty":
-                src = op.get("src", "")
-                tgt = op.get("tgt", "")
+                src = _tag(op.get("src", ""))
+                tgt = _tag(op.get("tgt", ""))
                 qty = op.get("qty", 0)
                 if not src or not tgt:
                     continue

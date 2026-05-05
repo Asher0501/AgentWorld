@@ -23,18 +23,37 @@ flowchart LR
     GE["📦 Graph Engine<br/><small>pure topology</small>"]
     DB[("💾 DB /<br/>Persistence")]
 
-    subgraph P["Seven-Stage LLM Pipeline · 七阶段 LLM 管线"]
+    subgraph P["Component-Split Pipeline · 分量分割管线"]
         direction TB
         L1["🤖 LLM #1<br/>Planning<br/>规划"]
         L2["🤖 LLM #2<br/>Topo Structure<br/>拓扑结构"]
         IE["⚙️ Intent Executor<br/>(code)"]
         TL["🌉 Translation Layer<br/>翻译层<br/><small>abstact letters → NL</small>"]
-        L3["🤖 LLM #3<br/>Narrative<br/>叙事"]
-        L4a["🤖 LLM #4a<br/>Topo Delta<br/>拓扑增量"]
-        CV["⚙️ Conservation<br/>Validator<br/><small>Σ=0 check</small>"]
-        L4b["🤖 LLM #4b<br/>Content / Attr<br/>属性变化"]
-        L5["🤖 LLM #5<br/>Verification<br/>校验"]
-        retry{{"🔁 Retry #4a+#4b<br/>with feedback<br/>带反馈重试"}}
+        CP["✂️ Component Split<br/>分量分割<br/><small>BFS per zone</small>"]
+
+        subgraph C0["Component 0 · 分量 0 (Zone A)"]
+            L3_0["🤖 LLM #3<br/>Narrative"]
+            L4a_0["🤖 LLM #4a<br/>Topo Delta"]
+            CV_0["⚙️ Conservation<br/>Validator"]
+            L4b_0["🤖 LLM #4b<br/>Content / Attr"]
+            L5_0["🤖 LLM #5<br/>Verification"]
+            retry_0{{"🔁 Retry (component only)<br/>仅重跑本分量"}}
+            L3_0 --> L4a_0 --> CV_0 --> L4b_0 --> L5_0
+            L5_0 -->|"❌"| retry_0 -.-> L3_0
+        end
+
+        subgraph C1["Component 1 · 分量 1 (Zone B)"]
+            L3_1["🤖 LLM #3<br/>Narrative"]
+            L4a_1["🤖 LLM #4a<br/>Topo Delta"]
+            CV_1["⚙️ Conservation<br/>Validator"]
+            L4b_1["🤖 LLM #4b<br/>Content / Attr"]
+            L5_1["🤖 LLM #5<br/>Verification"]
+            retry_1{{"🔁 Retry (component only)"}}
+            L3_1 --> L4a_1 --> CV_1 --> L4b_1 --> L5_1
+            L5_1 -->|"❌"| retry_1 -.-> L3_1
+        end
+
+        MG["🔀 Merge · 归并<br/><small>aggregate all components</small>"]
     end
 
     DB --> GE
@@ -42,15 +61,14 @@ flowchart LR
     L1 -->|"NL plans"| L2
     L2 -->|"connect/disconnect"| IE
     IE -->|"topo changes"| TL
-    TL -->|"translated topo"| L3
-    L3 -->|"stories"| L4a
-    L4a -->|"delta ops"| CV
-    CV -->|"pass / partial"| L4b
-    L4b -->|"attr + recent_info"| L5
-    L5 -->|"✅ valid"| GE
-    L5 -->|"❌ failed"| retry
-    retry -.-> L4a
-
+    TL -->|"translated topo"| CP
+    CP --> C0
+    CP --> C1
+    CP -.->|"... N components"| CX["..."]
+    C0 -->|"✅ valid"| MG
+    C1 -->|"✅ valid"| MG
+    CX --> MG
+    MG -->|"merged ops"| GE
     GE --> DB
 
     style GE fill:#e0e0e0,stroke:#333
@@ -58,16 +76,43 @@ flowchart LR
     style L2 fill:#fff3e0
     style IE fill:#f5f5f5,stroke:#999
     style TL fill:#e0f7fa,stroke:#00bcd4,stroke-width:2px
-    style L3 fill:#f3e5f5
-    style L4a fill:#e8f5e9
-    style CV fill:#fff9c4
-    style L4b fill:#e8f5e9
-    style L5 fill:#ffebee
-    style retry fill:#ffcdd2
+    style CP fill:#b2dfdb,stroke:#00695c,stroke-width:2px
+    style MG fill:#b2dfdb,stroke:#00695c,stroke-width:2px
+    style L3_0 fill:#f3e5f5
+    style L4a_0 fill:#e8f5e9
+    style CV_0 fill:#fff9c4
+    style L4b_0 fill:#e8f5e9
+    style L5_0 fill:#ffebee
+    style retry_0 fill:#ffcdd2
+    style L3_1 fill:#f3e5f5
+    style L4a_1 fill:#e8f5e9
+    style CV_1 fill:#fff9c4
+    style L4b_1 fill:#e8f5e9
+    style L5_1 fill:#ffebee
+    style retry_1 fill:#ffcdd2
+    style CX fill:#eee,stroke:#999
     style DB fill:#e0e0e0
 ```
 
 ---
+
+### Architecture Evolution · 架构进化
+
+**v1 (Serial pipeline):** Single global flow — 30+ entities in LLM #4a prompt, retry rebuilds everything.
+
+**v2 (Component-split):** After LLM #2 and Intent Executor, the graph is split into connected components (one per zone). Each component runs independently through LLM #3 → #4a → #4b → #5. Failed components retry alone. LLM #4a prompt drops from 30+ to 3–8 entities.
+
+```
+LLM #1 → #2 → 执行 → 分量分割 → 分量0 #3→#4a→#4b→#5
+                                → 分量1 #3→#4a→#4b→#5  (可并行)
+                                → ... → 归并 → 执行
+```
+
+**Key benefits · 核心收益:**
+- LLM #4a prompt: 30+ 实体 → 3~8 实体（LLM 不再超容量）
+- Retry cost: 250s → ~50s（只重跑小分量）
+- Future parallel: ~650s → ~200s
+- Story↔topo 一致（失败分量连带重跑 LLM #3）
 
 ### Stage Details · 阶段详解
 
@@ -77,11 +122,13 @@ flowchart LR
 | **#2 Topo Structure · 拓扑结构** | All plans · 所有计划 | `connect`/`disconnect`/`set_qty` |
 | **↳ Intent Executor (code)** | Topo ops · 拓扑操作 | Applied graph mutations · 图变更 |
 | **🌉 Translation Layer · 翻译层** | Abstract topo letters · 抽象字母拓扑 | NL-translated topology · 自然语言拓扑 |
+| **✂️ Component Split** | Translated topo + plans · 翻译后拓扑+计划 | N connected components · N 个连通分量 |
 | **#3 Narrative · 叙事** | Translated topo + plans · 翻译后拓扑+计划 | Story per component · 逐连通分量故事 |
 | **#4a Topo Delta · 拓扑增量** | Stories + graph state · 故事+图状态 | `delta`/`system_delta`/`recipe` ops |
 | **↳ Conservation Validator · 守恒校验** | Delta ops | Pass / partial-fail (per group) |
 | **#4b Content · 属性变化** | Stories + topo | `attr` deltas + `recent_info` |
-| **#5 Verification · 校验** | All outputs · 全部输出 | Pass → persist / Fail → retry · 通过→落盘/失败→重试 |
+| **#5 Verification · 校验** | All outputs · 全部输出 | Pass → merge & persist / Fail → retry component only · 通过→归并落盘/失败→仅重跑失败分量 |
+| **🔀 Merge · 归并** | All component results · 全部分量结果 | Aggregated final operations · 归并后最终操作 |
 
 ---
 
@@ -292,15 +339,17 @@ src/agent_world/
 ├── entities/               # Entity models
 ├── models/                 # Pydantic data models
 └── services/               # Core pipeline
-    ├── graph_npc_engine.py         # Main orchestration engine
-    ├── graph_engine.py             # 🔷 Pure graph topology engine
+    ├── graph_npc_engine.py         # Main orchestration engine (entry point)
+    ├── pipeline_orchestrator.py    # 🔷 Pipeline orchestrator (LLM #1–#5 flow)
+    ├── graph_engine.py             # 🔷 Pure graph topology engine + component split
     ├── graph_adapter.py            # DB → Graph adapter
     ├── domain_adapter.py           # Renders slots from domain.json
+    ├── pipeline_engine.py          # Stage engine (LLM call wrappers)
     ├── prompt_assembler.py         # Slot-based prompt assembly (+ TL)
     ├── interaction_resolver.py     # LLM API wrapper
     ├── interaction_layer.py        # LLM #3 story generation
     ├── intent_executor.py          # LLM #2 execution
-    ├── post_processor.py           # LLM #4 batch update
+    ├── post_processor.py           # LLM #4a (topo delta) + #4b (content)
     ├── conservation_validator.py   # Σ=0 validation
     ├── verification_registry.py    # 🔷 Centralized check registration
     └── verification_layer.py       # LLM #5 verification orchestrator

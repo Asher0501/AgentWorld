@@ -290,25 +290,36 @@ class GraphEngine:
             givers = [o for o in group if o.get("delta", 0) < 0]
             receivers = [o for o in group if o.get("delta", 0) > 0]
 
+            # 先统计每个 src→tgt 的总付出，防止同付出方多次扣除
+            src_total_demand: dict[str, int] = {}
+            for giver in givers:
+                src_eid = self.resolve_eid(giver.get("src", "")) or giver.get("src", "")
+                src_total_demand[src_eid] = src_total_demand.get(src_eid, 0) + abs(giver["delta"])
+
             for giver in givers:
                 src_raw = giver.get("src", "")
                 src_eid = self.resolve_eid(src_raw) or src_raw
                 need = abs(giver["delta"])
-                # 检查库存
+                # 检查库存（考虑同 src→tgt 多次扣减的累积）
+                total_demand = src_total_demand.get(src_eid, need)
                 edge = self.get_edge(src_eid, item_eid)
                 available = edge.quantity if edge else 0
-                if available >= need:
+                if available >= total_demand:
                     continue  # 够付，不用调整
 
-                # 不够付！需要 clip
-                excess = need - available  # 差多少
-                giver["delta"] = -available  # 裁剪到实际可付
+                # 不够付！按比例同比缩减本笔 delta
+                need_clipped = int(-need * available / max(1, total_demand))
+                excess = abs(giver["delta"]) - abs(need_clipped)
+                giver["delta"] = need_clipped
                 logger.warning(
                     f"[Graph] conserve: {src_raw} 只有 {available} 个 {item_eid}，"
-                    f"delta={-need} 裁剪为 -{available}（差量 {excess}）"
+                    f"总需求 {total_demand}（本笔 {need}），"
+                    f"delta {need * (-1)} 裁剪为 {need_clipped}（差量 {excess}）"
                 )
 
-                # 从接收方扣除差量，维持守恒
+                if not receivers:
+                    continue
+                # 从接收方扣除差额，维持守恒
                 remain = excess
                 for receiver in receivers:
                     if remain <= 0:
@@ -832,6 +843,121 @@ class GraphEngine:
             )
             self._graph.add_edge(edge)
             self._edge_by_pair[(edata["src"], edata["tgt"])] = edge
+
+    # ═══════════════════════════════════════════
+    # 连通分量分割
+    # ═══════════════════════════════════════════
+
+    def build_components(self) -> list["TopoComponent"]:
+        """
+        BFS 遍历全图，按 same_type_block 切割连通分量。
+
+        从每个 NPC（actor）出发 BFS，zone 节点设 same_type_block=true →
+        跨 zone 不穿透，每个 zone 自成一个分量。
+        无 zone 的 NPC 归为独立分量。
+
+        Returns:
+            list[TopoComponent]: 按 zone 顺序排列
+        """
+        from collections import deque
+
+        # 收集所有 NPC
+        npc_eids = set()
+        for eid, ent in self._entities.items():
+            if has_role(ent.type_id, "actor"):
+                npc_eids.add(eid)
+
+        all_npcs = set(npc_eids)
+        components: list[TopoComponent] = []
+
+        while all_npcs:
+            start = next(iter(all_npcs))
+            queue: deque[str] = deque([start])
+            visited: set[str] = set()
+            comp_eids: set[str] = set()
+
+            while queue:
+                cur = queue.popleft()
+                if cur in visited:
+                    continue
+                visited.add(cur)
+                comp_eids.add(cur)
+                cur_ent = self._entities.get(cur)
+                if not cur_ent:
+                    continue
+                for conn_eid in cur_ent.connected_entity_ids:
+                    if conn_eid in visited:
+                        continue
+                    conn_ent = self._entities.get(conn_eid)
+                    if not conn_ent:
+                        continue
+                    # Leaf（terminal）：加入但不扩展
+                    if conn_ent.is_leaf:
+                        comp_eids.add(conn_eid)
+                        continue
+                    # 同类型阻断：加入但不穿透（zone→zone）
+                    if conn_ent.no_same_type and conn_ent.type_id == cur_ent.type_id:
+                        comp_eids.add(conn_eid)
+                        continue
+                    queue.append(conn_eid)
+
+            # 从 visited 中提取 NPC
+            comp_npcs = {e for e in comp_eids if e in npc_eids}
+
+            # 找 zone
+            zone_eid = None
+            for eid in comp_eids:
+                ent = self._entities.get(eid)
+                if ent and has_role(ent.type_id, "region"):
+                    zone_eid = eid
+                    break
+
+            # 构建 label_map
+            _, label_map = self.build_tagged_topology(list(comp_eids))
+
+            comp = TopoComponent(
+                id=len(components),
+                eids=comp_eids,
+                npc_eids=comp_npcs,
+                zone_eid=zone_eid,
+                label_map=label_map,
+            )
+            components.append(comp)
+            all_npcs -= comp_npcs
+
+        return components
+
+
+# ─── 数据类 ───
+
+from dataclasses import field
+from typing import Optional
+
+
+class TopoComponent:
+    """连通分量，表示一个独立子图。"""
+
+    def __init__(
+        self,
+        id: int = 0,
+        eids: set[str] | None = None,
+        npc_eids: set[str] | None = None,
+        zone_eid: str | None = None,
+        label_map: dict[str, str] | None = None,
+    ):
+        self.id = id
+        self.eids: set[str] = eids or set()
+        self.npc_eids: set[str] = npc_eids or set()
+        self.zone_eid: str | None = zone_eid
+        self.label_map: dict[str, str] = label_map or {}
+
+        # 运行时填充（由 orchestrator 写入）
+        self.exec_results: list[dict] = []
+        self.stories: list[str] = []
+        self.topo_ops: list[dict] = []
+        self.attr_ops: list[dict] = []
+        self.recent_info: dict[str, str] = field(default_factory=dict)
+        self.failures: list = []
 
 
 # ─── 辅助函数 ───

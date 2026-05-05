@@ -17,7 +17,6 @@ from .memory import MemoryStore, MemoryEntry
 from .context import ContextBuilder
 from .reasoner import GoalReasoner, GoalOutput
 from .common_knowledge import COMMON_KNOWLEDGE, WORK_SCHEDULE, ROLE_BEHAVIORS, WORLD_PHYSICS, GOAL_TYPES
-from .npc_prompt_builder import build_one_npc_prompt, build_one_fallback_prompt
 
 __all__ = [
     "PersonaTags",
@@ -26,8 +25,7 @@ __all__ = [
     "ContextBuilder",
     "GoalReasoner",
     "GoalOutput",
-    "build_one_npc_prompt",
-    "build_one_fallback_prompt",
+
     "COMMON_KNOWLEDGE",
     "WORK_SCHEDULE",
     "ROLE_BEHAVIORS",

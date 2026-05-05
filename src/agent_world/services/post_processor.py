@@ -54,16 +54,58 @@ class PostProcessor:
         world_time_str: str | None = None,
         tick_duration_str: str | None = None,
         feedback: str = "",
+        topo_pool: set[str] | None = None,
+        label_map: dict[str, str] | None = None,
     ) -> list[dict]:
         """
         LLM #4a: 故事 + 拓扑 → 拓扑层操作。
         解析委托给域适配器。
+
+        Args:
+            topo_pool: 预计算的拓扑池（分量模式用）。为 None 时自动 BFS。
+            label_map: 预计算的标签映射（分量模式用）。为 None 时自动生成。
 
         Returns:
             [{op: "delta"|"system_delta"|"recipe"|...}]
         """
         if not stories or not npc_plans:
             return []
+
+        # 如果给了 topo_pool/label_map，跳过 BFS（分量模式）
+        if topo_pool is None:
+            # BFS 遍历，same_type_block 阻断同类型穿透
+            from collections import deque
+            topo_pool = set()
+            for npc_eid in npc_plans:
+                if npc_eid in topo_pool:
+                    continue
+                queue: deque[str] = deque([npc_eid])
+                visited: set[str] = set()
+                while queue:
+                    cur = queue.popleft()
+                    if cur in visited:
+                        continue
+                    visited.add(cur)
+                    topo_pool.add(cur)
+                    cur_ent = graph_engine.get_entity(cur)
+                    if not cur_ent:
+                        continue
+                    for conn_eid in cur_ent.connected_entity_ids:
+                        if conn_eid in visited:
+                            continue
+                        conn_ent = graph_engine.get_entity(conn_eid)
+                        if not conn_ent:
+                            continue
+                        if conn_ent.is_leaf:
+                            topo_pool.add(conn_eid)
+                            continue
+                        if conn_ent.no_same_type and conn_ent.type_id == cur_ent.type_id:
+                            topo_pool.add(conn_eid)
+                            continue
+                        queue.append(conn_eid)
+
+        if label_map is None:
+            _, label_map = graph_engine.build_tagged_topology(list(topo_pool))
 
         prompt = self._build_topo_prompt(
             npc_plans=npc_plans,
@@ -72,6 +114,7 @@ class PostProcessor:
             world_time_str=world_time_str,
             tick_duration_str=tick_duration_str,
             feedback=feedback,
+            topo_pool=topo_pool,
         )
 
         if not self._resolver:
@@ -89,7 +132,7 @@ class PostProcessor:
         # 通过域适配器解析（支持除名解析+拓扑校验）
         if self._adapter:
             ops = self._adapter.parse_llm_output(
-                stage=4, raw_text=raw, label_map=None, graph=graph_engine,
+                stage=4, raw_text=raw, label_map=label_map, graph=graph_engine,
             )
         else:
             ops = self._parse_topo_output(raw, graph_engine)
@@ -155,28 +198,16 @@ class PostProcessor:
         world_time_str: str | None = None,
         tick_duration_str: str | None = None,
         feedback: str = "",
+        topo_pool: set[str] | None = None,
     ) -> str:
         """构建 LLM #4a prompt：拓扑层操作。"""
         entities = []
-        topo_pool: set[str] = set()
+        if topo_pool is None:
+            topo_pool = set()
         for npc_eid in npc_plans:
             ent = graph_engine.get_entity(npc_eid)
             if ent:
                 entities.append(ent)
-                topo_pool.add(npc_eid)
-                for conn_eid in ent.connected_entity_ids:
-                    topo_pool.add(conn_eid)
-                    ce = graph_engine.get_entity(conn_eid)
-                    if ce and has_role(ce.type_id, "region"):
-                        for other in graph_engine.all_entities():
-                            if has_role(other.type_id, "actor") \
-                               and other.entity_id not in topo_pool \
-                               and other.is_connected_to(conn_eid):
-                                topo_pool.add(other.entity_id)
-                                for oconn in other.connected_entity_ids:
-                                    ce2 = graph_engine.get_entity(oconn)
-                                    if ce2 and has_role(ce2.type_id, "thing"):
-                                        topo_pool.add(oconn)
         return assemble(
             "llm4a_topo", self._adapter, graph_engine,
             _caller="llm4a",

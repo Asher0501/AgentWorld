@@ -105,6 +105,16 @@ class GraphNPCEngine:
                 for npc in default_npcs:
                     npc_db.create_npc(npc)
                 logger.info(f"初始化 {len(default_npcs)} 个默认 NPC 到数据库")
+            else:
+                # 增量同步：检查 config 中有无 DB 没有的新 NPC
+                from ..models.npc_defaults import create_diverse_npcs
+                config_npcs = create_diverse_npcs(small=self._small_mode)
+                db_names = {n.name for n in existing}
+                new_npcs = [n for n in config_npcs if n.name not in db_names]
+                if new_npcs:
+                    for npc in new_npcs:
+                        npc_db.create_npc(npc)
+                    logger.info(f"增量同步: 新增 {len(new_npcs)} 个 NPC → DB ({', '.join(n.name for n in new_npcs)})")
 
         self._world_initialized = True
 

@@ -23,6 +23,7 @@ from .pipeline_engine import PipelineEngine, StageResult
 from .post_processor import PostProcessor as _PostProcessor
 from .interaction_layer import InteractionLayer as _InteractionLayer
 from .verification_layer import VerificationLayer as _VerificationLayer
+from .graph_engine import TopoComponent
 from ..config.config_loader import has_role, get_verification_config
 
 logger = logging.getLogger("PipelineOrchestrator")
@@ -43,7 +44,10 @@ class PipelineContext:
         # ——— 阶段中间输出 ———
         self.topo_structure_ops: list[GraphOp] = []
         self.exec_results: list[dict] = []
-        self.stories: list[str] = []
+        self.stories: list[str] = []  # 旧模式：全局故事（保留向后兼容）
+
+        # ——— 连通分量分割（新增） ———
+        self.components: list[TopoComponent] = []
 
         # ——— LLM #4a / #4b 输出 ———
         self.topo_delta_ops: list[GraphOp] = []
@@ -64,6 +68,7 @@ class PipelineContext:
             "topo_struct": len(self.topo_structure_ops),
             "exec": len(self.exec_results),
             "stories": len(self.stories),
+            "components": len(self.components),
             "topo_delta": len(self.topo_delta_ops),
             "attr": len(self.attr_ops),
             "ri": len(self.recent_info_map),
@@ -108,7 +113,8 @@ class PipelineOrchestrator:
         tick_duration_str: str = "",
     ) -> list[dict]:
         """
-        执行完整管线 tick（LLM #1 → #2 → IntentExecutor → #3 → #4a/#4b/#5 → 执行）。
+        执行完整管线 tick（LLM #1 → #2 → IntentExecutor → 分量分割 →
+            每分量: #3 → #4a → #4b → #5 → 归并 → 执行）。
 
         Args:
             npcs: DB NPC 模型列表
@@ -125,26 +131,27 @@ class PipelineOrchestrator:
         if not self.llm_available or not self.resolver:
             raise RuntimeError("LLM 不可用")
 
-        # Step 1: LLM #1 — 计划生成
+        # Step 1: LLM #1 — 计划生成（不变，per-NPC 并发）
         await self._run_stage_plan(npcs, ctx)
         if not ctx.plan_map:
             return []
         logger.info(f"[LLM #1] {len(ctx.plan_map)} 个 NPC 的计划已生成")
 
-        # Step 2: LLM #2 — 拓扑结构变更
+        # Step 2: LLM #2 — 拓扑结构变更（不变，全局视图）
         await self._stage_topo_structure(ctx)
 
-        # Step 3: IntentExecutor — 执行结构变更
+        # Step 3: IntentExecutor — 执行结构变更（不变）
         ctx.exec_results = self._execute_intents(npcs, ctx)
 
-        # Step 4: LLM #3 — 故事生成
-        ctx.stories = self._stage_narrative(ctx)
+        # Step 4: 连通分量分割（新增）
+        ctx.components = self._split_components(ctx)
 
-        # Step 5: LLM #4a → #4b → 校验/重试/降级
-        await self._stage_verification_loop(ctx)
+        # Step 5: 逐分量 LLM #3 → #4a → #4b → #5（串行，后续可并行化）
+        for comp in ctx.components:
+            await self._run_one_component(ctx, comp)
 
-        # Step 6: 执行最终操作
-        self._apply_final_ops(ctx)
+        # Step 6: 归并并执行最终操作
+        self._merge_commit_components(ctx)
 
         # Step 7: 构建返回结果
         ctx.tick_results = self._build_tick_results(ctx)
@@ -350,8 +357,153 @@ class PipelineOrchestrator:
         logger.info(f"[LLM #3] {len(edge_results)} 条边 → {len(stories)} 个唯一故事")
         return stories
 
+    def _stage_narrative_component(
+        self, ctx: PipelineContext, comp: TopoComponent
+    ) -> list[str]:
+        """
+        为单个分量生成故事。只处理该分量的 exec_results。
+        """
+        if not comp.exec_results:
+            return []
+        edge_results = self._il.process(
+            [er for er in comp.exec_results],
+            graph_engine=self.graph_engine,
+            world_time_str=ctx.world_time_str,
+            tick_duration_str=ctx.tick_duration_str,
+        )
+        stories = list(dict.fromkeys(e.description for e in edge_results))
+        logger.info(f"[分量 {comp.id}] LLM #3: {len(edge_results)} 条边 → "
+                     f"{len(stories)} 个唯一故事")
+        return stories
+
     # ═══════════════════════════════════════════
-    # Step 5: 验证/重试/降级
+    # Step 4.5: 连通分量分割
+    # ═══════════════════════════════════════════
+
+    def _split_components(self, ctx: PipelineContext) -> list[TopoComponent]:
+        """
+        将 exec_results 按拓扑连通分量切分。
+        """
+        components = self.graph_engine.build_components()
+
+        # 把 exec_results 按 NPC 归属分配到各分量
+        npc_to_comp: dict[str, TopoComponent] = {}
+        for comp in components:
+            for neid in comp.npc_eids:
+                npc_to_comp[neid] = comp
+
+        for er in ctx.exec_results:
+            neid = er.get("npc_eid", "")
+            comp = npc_to_comp.get(neid)
+            if comp is not None:
+                comp.exec_results.append(er)
+            else:
+                # NPC 不在任何分量（理论上不应发生）→ 归入分量 0
+                if components:
+                    components[0].exec_results.append(er)
+
+        # 移除空分量（无交互结果）
+        active = [c for c in components if c.exec_results or c.npc_eids]
+        # 重置 id
+        for i, c in enumerate(active):
+            c.id = i
+        logger.info(f"[分量] {len(active)} 个活跃分量")
+        return active
+
+    # ═══════════════════════════════════════════
+    # Step 4.6: 单分量管线
+    # ═══════════════════════════════════════════
+
+    async def _run_one_component(self, ctx: PipelineContext, comp: TopoComponent):
+        """
+        执行单个连通分量的完整 #3 → #4a → #4b → #5 管线。
+        失败时自动 retry，仅限于本分量内部。
+        """
+        max_retries = get_verification_config("max_retries", 1)
+
+        # LLM #3 for this component
+        comp.stories = self._stage_narrative_component(ctx, comp)
+
+        # 筛选本分量的 npc_plans
+        comp_plans = {eid: ctx.plan_map[eid] for eid in comp.npc_eids if eid in ctx.plan_map}
+
+        for attempt in range(max_retries + 1):
+            # LLM #4a — 拓扑操作
+            comp.topo_ops = self._pp.resolve_topology_changes(
+                npc_plans=comp_plans,
+                stories=comp.stories,
+                graph_engine=self.graph_engine,
+                world_time_str=ctx.world_time_str,
+                tick_duration_str=ctx.tick_duration_str,
+                topo_pool=comp.eids,
+                label_map=comp.label_map,
+            )
+            logger.info(f"[分量 {comp.id}] LLM #4a: {len(comp.topo_ops)} 个拓扑操作")
+
+            # LLM #4b — 属性 + 近况
+            comp.attr_ops, comp.recent_info = self._pp.resolve_attr_and_recent(
+                npc_plans=comp_plans,
+                stories=comp.stories,
+                graph_engine=self.graph_engine,
+                world_time_str=ctx.world_time_str,
+                tick_duration_str=ctx.tick_duration_str,
+            )
+            logger.info(f"[分量 {comp.id}] LLM #4b: {len(comp.attr_ops)} attr, "
+                         f"{len(comp.recent_info)} ri")
+
+            # LLM #5 — 校验
+            comp.failures = self._vl.check_all(
+                comp.stories, comp.topo_ops, comp.attr_ops, comp.recent_info,
+            )
+
+            if not comp.failures:
+                logger.info(f"[分量 {comp.id}] LLM #5 校验通过 (attempt {attempt + 1})")
+                break
+
+            if attempt >= max_retries:
+                logger.warning(f"[分量 {comp.id}] 已达最大重试次数 ({max_retries})")
+                break
+
+            # 构造 feedback，只包含本分量的失败项
+            first_topo = getattr(self._pp, "_last_raw_topo_response", "")
+            first_attr = getattr(self._pp, "_last_raw_attr_response", "")
+            feedback = self._vl.build_feedback(
+                comp.failures,
+                previous_topo_output=first_topo,
+                previous_attr_output=first_attr,
+            )
+            logger.warning(f"[分量 {comp.id}] 校验失败 ({len(comp.failures)} 项)，"
+                           f"重试 #{attempt + 2}")
+
+        # 降级（按分量）
+        if comp.topo_ops:
+            filtered = self.adapter.validate_ops(comp.topo_ops, self.graph_engine)
+            removed = len(comp.topo_ops) - len(filtered)
+            if removed:
+                logger.warning(f"[分量 {comp.id}] 降级移除 {removed}/{len(comp.topo_ops)} 操作")
+            comp.topo_ops = filtered
+
+    # ═══════════════════════════════════════════
+    # Step 5.5: 归并分量
+    # ═══════════════════════════════════════════
+
+    def _merge_commit_components(self, ctx: PipelineContext):
+        """归并所有分量结果到全局 context 并执行。"""
+        for comp in ctx.components:
+            ctx.topo_delta_ops.extend(comp.topo_ops or [])
+            ctx.attr_ops.extend(comp.attr_ops or [])
+            ctx.recent_info_map.update(comp.recent_info or {})
+            ctx.stories.extend(comp.stories or [])
+
+        logger.info(f"[归并] {len(ctx.components)} 个分量合并: "
+                     f"{len(ctx.topo_delta_ops)} topo ops, "
+                     f"{len(ctx.attr_ops)} attr ops, "
+                     f"{len(ctx.recent_info_map)} ri entries")
+
+        self._apply_final_ops(ctx)
+
+    # ═══════════════════════════════════════════
+    # Step 5: 验证/重试/降级（旧模式，保留向后兼容）
     # ═══════════════════════════════════════════
 
     async def _stage_verification_loop(self, ctx: PipelineContext):
@@ -433,11 +585,22 @@ class PipelineOrchestrator:
 
         if ctx.recent_info_map:
             from ..config.node_ontology import has_recent_info
+            import json as _json
             w = 0
             for eid, txt in ctx.recent_info_map.items():
                 ent = self.graph_engine.get_entity(eid)
                 if ent and has_recent_info(ent.type_id):
-                    ent.recent_info = txt
+                    history = []
+                    if ent.recent_info:
+                        try:
+                            history = _json.loads(ent.recent_info)
+                        except (_json.JSONDecodeError, TypeError):
+                            history = []
+                    if not isinstance(history, list):
+                        history = []
+                    history.insert(0, {"t": ctx.world_time_str, "text": txt})
+                    history = history[:3]
+                    ent.recent_info = _json.dumps(history, ensure_ascii=False)
                     w += 1
             if w:
                 logger.info(f"[LLM #5] 近况投影写入 {w} 个实体")
