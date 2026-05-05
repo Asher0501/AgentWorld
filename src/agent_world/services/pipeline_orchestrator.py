@@ -93,7 +93,7 @@ class PipelineOrchestrator:
         self.llm_available = llm_available
         self._engine = PipelineEngine(adapter, resolver, graph_engine, io_dir=io_dir)
         self._pp = _PostProcessor(resolver=resolver, adapter=adapter, engine=self._engine)
-        self._il = _InteractionLayer(resolver=resolver, adapter=adapter)
+        self._il = _InteractionLayer(resolver=resolver, adapter=adapter, engine=self._engine)
         self._vl = _VerificationLayer(
             resolver=resolver, adapter=adapter,
             graph_engine=graph_engine, llm_available=llm_available,
@@ -146,9 +146,9 @@ class PipelineOrchestrator:
         # Step 4: 连通分量分割（新增）
         ctx.components = self._split_components(ctx)
 
-        # Step 5: 逐分量 LLM #3 → #4a → #4b → #5（串行，后续可并行化）
-        for comp in ctx.components:
-            await self._run_one_component(ctx, comp)
+        # Step 5: 全分量 LLM #3 → #4a → #4b → #5（并行）
+        tasks = [self._run_one_component(ctx, comp) for comp in ctx.components]
+        await asyncio.gather(*tasks)
 
         # Step 6: 归并并执行最终操作
         self._merge_commit_components(ctx)
@@ -216,7 +216,7 @@ class PipelineOrchestrator:
             return
 
         raw_plans = await asyncio.wait_for(
-            self.resolver.resolve_all_npcs_async(npc_prompts),
+            self._engine.run_stage_plan_combined(npc_prompts, "plans"),
             timeout=PLAN_TIMEOUT,
         )
 
@@ -346,26 +346,16 @@ class PipelineOrchestrator:
     # Step 4: LLM #3
     # ═══════════════════════════════════════════
 
-    def _stage_narrative(self, ctx: PipelineContext) -> list[str]:
-        edge_results = self._il.process(
-            [er for er in ctx.exec_results],
-            graph_engine=self.graph_engine,
-            world_time_str=ctx.world_time_str,
-            tick_duration_str=ctx.tick_duration_str,
-        )
-        stories = list(dict.fromkeys(e.description for e in edge_results))
-        logger.info(f"[LLM #3] {len(edge_results)} 条边 → {len(stories)} 个唯一故事")
-        return stories
-
-    def _stage_narrative_component(
+    async def _stage_narrative_component(
         self, ctx: PipelineContext, comp: TopoComponent
     ) -> list[str]:
         """
         为单个分量生成故事。只处理该分量的 exec_results。
+        InteractionLayer.process 已改为 async，直接 await 不阻塞。
         """
         if not comp.exec_results:
             return []
-        edge_results = self._il.process(
+        edge_results = await self._il.process(
             [er for er in comp.exec_results],
             graph_engine=self.graph_engine,
             world_time_str=ctx.world_time_str,
@@ -421,15 +411,15 @@ class PipelineOrchestrator:
         """
         max_retries = get_verification_config("max_retries", 1)
 
-        # LLM #3 for this component
-        comp.stories = self._stage_narrative_component(ctx, comp)
+        # LLM #3 for this component（异步）
+        comp.stories = await self._stage_narrative_component(ctx, comp)
 
         # 筛选本分量的 npc_plans
         comp_plans = {eid: ctx.plan_map[eid] for eid in comp.npc_eids if eid in ctx.plan_map}
 
         for attempt in range(max_retries + 1):
-            # LLM #4a — 拓扑操作
-            comp.topo_ops = self._pp.resolve_topology_changes(
+            # LLM #4a — 拓扑操作（异步）
+            comp.topo_ops = await self._pp.resolve_topology_changes_async(
                 npc_plans=comp_plans,
                 stories=comp.stories,
                 graph_engine=self.graph_engine,
@@ -440,8 +430,8 @@ class PipelineOrchestrator:
             )
             logger.info(f"[分量 {comp.id}] LLM #4a: {len(comp.topo_ops)} 个拓扑操作")
 
-            # LLM #4b — 属性 + 近况
-            comp.attr_ops, comp.recent_info = self._pp.resolve_attr_and_recent(
+            # LLM #4b — 属性 + 近况（异步）
+            comp.attr_ops, comp.recent_info = await self._pp.resolve_attr_and_recent_async(
                 npc_plans=comp_plans,
                 stories=comp.stories,
                 graph_engine=self.graph_engine,
@@ -501,76 +491,6 @@ class PipelineOrchestrator:
                      f"{len(ctx.recent_info_map)} ri entries")
 
         self._apply_final_ops(ctx)
-
-    # ═══════════════════════════════════════════
-    # Step 5: 验证/重试/降级（旧模式，保留向后兼容）
-    # ═══════════════════════════════════════════
-
-    async def _stage_verification_loop(self, ctx: PipelineContext):
-        max_retries = get_verification_config("max_retries", 1)
-
-        # 第一轮
-        ctx.topo_delta_ops = self._pp.resolve_topology_changes(
-            npc_plans=ctx.plan_map, stories=ctx.stories,
-            graph_engine=self.graph_engine,
-            world_time_str=ctx.world_time_str,
-            tick_duration_str=ctx.tick_duration_str,
-        )
-        ctx.first_topo_raw = getattr(self._pp, "_last_raw_topo_response", "")
-        logger.info(f"[LLM #4a] {len(ctx.topo_delta_ops)} 个拓扑操作")
-
-        ctx.attr_ops, ctx.recent_info_map = self._pp.resolve_attr_and_recent(
-            npc_plans=ctx.plan_map, stories=ctx.stories,
-            graph_engine=self.graph_engine,
-            world_time_str=ctx.world_time_str,
-            tick_duration_str=ctx.tick_duration_str,
-        )
-        ctx.first_attr_raw = getattr(self._pp, "_last_raw_attr_response", "")
-        logger.info(f"[LLM #4b] {len(ctx.attr_ops)} attr, {len(ctx.recent_info_map)} 条近况")
-
-        # 验证 + 重试
-        for attempt in range(max_retries + 1):
-            failures = self._vl.check_all(
-                ctx.stories, ctx.topo_delta_ops, ctx.attr_ops, ctx.recent_info_map,
-            )
-            if not failures:
-                logger.info(f"[LLM #5] 校验通过 (attempt {attempt + 1})")
-                break
-            if attempt >= max_retries:
-                logger.warning(f"[LLM #5] 已达最大重试次数 ({max_retries})")
-                break
-
-            feedback = self._vl.build_feedback(
-                failures, previous_topo_output=ctx.first_topo_raw,
-                previous_attr_output=ctx.first_attr_raw,
-            )
-            logger.warning(f"[LLM #5] 校验失败 ({len(failures)} 项)，重试 #{attempt + 2}")
-
-            ctx.topo_delta_ops = self._pp.resolve_topology_changes(
-                npc_plans=ctx.plan_map, stories=ctx.stories,
-                graph_engine=self.graph_engine,
-                world_time_str=ctx.world_time_str,
-                tick_duration_str=ctx.tick_duration_str,
-                feedback=feedback,
-            )
-            ctx.attr_ops, ctx.recent_info_map = self._pp.resolve_attr_and_recent(
-                npc_plans=ctx.plan_map, stories=ctx.stories,
-                graph_engine=self.graph_engine,
-                world_time_str=ctx.world_time_str,
-                tick_duration_str=ctx.tick_duration_str,
-                feedback=feedback,
-            )
-
-        # 降级
-        if ctx.topo_delta_ops:
-            filtered = self.adapter.validate_ops(ctx.topo_delta_ops, self.graph_engine)
-            removed = len(ctx.topo_delta_ops) - len(filtered)
-            if removed:
-                logger.warning(f"[降级] 度守恒移除 {removed}/{len(ctx.topo_delta_ops)} 操作")
-            ctx.topo_delta_ops = filtered
-
-        logger.info(f"[LLM #5] 最终: {len(ctx.topo_delta_ops)} topo, "
-                     f"{len(ctx.attr_ops)} attr, {len(ctx.recent_info_map)} ri")
 
     # ═══════════════════════════════════════════
     # Step 6: 执行

@@ -6,6 +6,8 @@
   <em><b>Graph is not a feature. Graph is the system.</b></em>
   <br/>
   <em><b>图拓扑不是组件，是整个系统的骨架。</b></em>
+  <br/>
+  <small>✨ <b>拓扑-内容解耦</b> · 分量并行管线 · 统一 LLM 入口 · 度守恒校验 ✨</small>
 </p>
 
 ---

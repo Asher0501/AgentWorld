@@ -42,11 +42,20 @@ class PostProcessor:
         self._adapter = adapter
         self._engine = engine  # PipelineEngine（提供 IO 日志 + 计时）
 
+    # ─── LLM 调用统一入口（异步）───
+
+    async def _call_llm_async(self, prompt: str, stage_label: str) -> str:
+        """异步 LLM 调用，通过 engine 或 resolver。"""
+        if self._engine:
+            return await self._engine.call_llm_async(prompt, stage_label)
+        import asyncio
+        return await asyncio.to_thread(self._resolver._call_llm, prompt)
+
     # ════════════════════════════════════════════════════════════════
     # LLM #4a: 拓扑层操作 (delta / system_delta / recipe)
     # ════════════════════════════════════════════════════════════════
 
-    def resolve_topology_changes(
+    async def resolve_topology_changes_async(
         self,
         npc_plans: dict[str, str],
         stories: list[str],
@@ -57,23 +66,12 @@ class PostProcessor:
         topo_pool: set[str] | None = None,
         label_map: dict[str, str] | None = None,
     ) -> list[dict]:
-        """
-        LLM #4a: 故事 + 拓扑 → 拓扑层操作。
-        解析委托给域适配器。
-
-        Args:
-            topo_pool: 预计算的拓扑池（分量模式用）。为 None 时自动 BFS。
-            label_map: 预计算的标签映射（分量模式用）。为 None 时自动生成。
-
-        Returns:
-            [{op: "delta"|"system_delta"|"recipe"|...}]
-        """
+        """异步版 LLM #4a。与 resolve_topology_changes 共享 prompt/解析逻辑。"""
         if not stories or not npc_plans:
             return []
 
-        # 如果给了 topo_pool/label_map，跳过 BFS（分量模式）
+        # BFS 遍历（同同步版）
         if topo_pool is None:
-            # BFS 遍历，same_type_block 阻断同类型穿透
             from collections import deque
             topo_pool = set()
             for npc_eid in npc_plans:
@@ -121,15 +119,11 @@ class PostProcessor:
             logger.warning("[LLM #4a] 无 LLM resolver")
             return []
 
-        if self._engine:
-            raw = self._engine.call_llm(prompt, "topo_delta")
-        else:
-            raw = self._resolver._call_llm(prompt)
+        raw = await self._call_llm_async(prompt, "topo_delta")
         self._last_raw_topo_response = raw
         if not raw or not raw.strip():
             return []
 
-        # 通过域适配器解析（支持除名解析+拓扑校验）
         if self._adapter:
             ops = self._adapter.parse_llm_output(
                 stage=4, raw_text=raw, label_map=label_map, graph=graph_engine,
@@ -140,11 +134,7 @@ class PostProcessor:
         logger.info(f"[LLM #4a] 解析到 {len(ops)} 个拓扑操作")
         return ops
 
-    # ════════════════════════════════════════════════════════════════
-    # LLM #4b: 内容层操作 (attr + recent_info)
-    # ════════════════════════════════════════════════════════════════
-
-    def resolve_attr_and_recent(
+    async def resolve_attr_and_recent_async(
         self,
         npc_plans: dict[str, str],
         stories: list[str],
@@ -153,13 +143,7 @@ class PostProcessor:
         tick_duration_str: str | None = None,
         feedback: str = "",
     ) -> tuple[list[dict], dict[str, str]]:
-        """
-        LLM #4b: 故事 + 已更新拓扑 → attr + recent_info。
-        不输出任何边操作 (delta/system_delta/recipe)。
-
-        Returns:
-            (attr_ops, recent_info_map)
-        """
+        """异步版 LLM #4b。与 resolve_attr_and_recent 共享 prompt/解析逻辑。"""
         if not stories or not npc_plans:
             return [], {}
 
@@ -176,11 +160,8 @@ class PostProcessor:
             logger.warning("[LLM #4b] 无 LLM resolver")
             return [], {}
 
-        if self._engine:
-            raw = self._engine.call_llm(prompt, "content_update")
-        else:
-            raw = self._resolver._call_llm(prompt)
-        self._last_raw_attr_response = raw  # ← 存档供重试用
+        raw = await self._call_llm_async(prompt, "content_update")
+        self._last_raw_attr_response = raw
         if not raw or not raw.strip():
             return [], {}
 

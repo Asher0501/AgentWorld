@@ -114,54 +114,7 @@ class InteractionResolver:
         self.model = model
         self.temperature = temperature
 
-    # ─── 主调用（逐 NPC 独立）───
-
-    def resolve_all_npcs(self, npc_prompts: list[tuple[str, str]]) -> dict[str, dict]:
-        """
-        为所有 NPC 调用 LLM，每 NPC 独立推理。
-
-        Args:
-            npc_prompts: [(npc_entity_id, npc_prompt_string), ...]
-
-        Returns:
-            {npc_entity_id: instruction_dict}
-            失败的 NPC 返回空 dict
-        """
-        if not npc_prompts:
-            return {}
-
-        results: dict[str, dict] = {}
-
-        # 将所有 NPC prompt 合并为一次 LLM 调用，但保留 NPC 独立性
-        combined = self._build_combined_prompt(npc_prompts)
-        text = self._call_llm(combined)
-
-        if not text:
-            logger.warning("LLM 返回空，所有 NPC 降级为兜底")
-            return results
-
-        # 解析合并结果（LLM #1 现在输出自然语言文本）
-        parsed = self._parse_combined_response(text)
-        if isinstance(parsed, dict):
-            for eid, instr in parsed.items():
-                if isinstance(instr, str) and instr.strip():
-                    results[eid] = instr
-                elif isinstance(instr, dict):
-                    # 兼容旧格式：把 action 作为自然语言
-                    action = instr.get("action", "") or instr.get("result_text", str(instr))
-                    results[eid] = action
-                else:
-                    logger.warning(f"NPC {eid} 指令格式无效: {type(instr).__name__}")
-
-        logger.info(f"LLM 返回 {len(results)}/{len(npc_prompts)} 条指令")
-        return results
-
-    async def resolve_all_npcs_async(self, npc_prompts: list[tuple[str, str]]) -> dict[str, dict]:
-        """异步版本"""
-        import asyncio
-        return await asyncio.to_thread(self.resolve_all_npcs, npc_prompts)
-
-    # ─── Prompt 合并 ───
+    # ─── Prompt 合并（供 engine.run_stage_plan_combined 使用）───
 
     def _build_combined_prompt(self, npc_prompts: list[tuple[str, str]]) -> str:
         """将多个 NPC 的独立 prompt 合并为一个 LLM 调用"""

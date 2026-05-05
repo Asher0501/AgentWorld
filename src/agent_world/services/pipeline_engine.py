@@ -8,6 +8,7 @@ PipelineEngine — 通用 LLM Pipeline 编排引擎。
   - 域特定编排（retry loop、合并复杂类型）由调用方处理
 """
 from __future__ import annotations
+import asyncio
 import logging
 import os
 import time
@@ -111,27 +112,14 @@ class PipelineEngine:
         except OSError as e:
             logger.warning(f"[IO] 写入失败 ({base}): {e}")
 
-    def call_llm(self, prompt: str, stage_key: str, suffix: str = "") -> str:
-        """单次 LLM 调用 + IO 记录 + 计时（同步）。"""
+    async def call_llm_async(self, prompt: str, stage_key: str, suffix: str = "") -> str:
+        """异步 LLM 调用 + IO 记录 + 计时（事件循环不阻塞）。"""
         t0 = time.time()
         self._save_io(prompt, "<!-- waiting -->", stage_key, suffix)
-        raw = self.resolver.call_llm(prompt)
+        raw = await asyncio.to_thread(self.resolver.call_llm, prompt)
         elapsed = time.time() - t0
         self._timing[stage_key] = self._timing.get(stage_key, 0) + elapsed
         self._save_io(prompt, raw, stage_key, suffix)
-        return raw
-
-    def call_batch_llm(
-        self, prompts: list[tuple[str, str]], stage_key: str, suffix: str = ""
-    ) -> str:
-        """批量 LLM 调用（组合多个 prompt 为一个请求）。"""
-        t0 = time.time()
-        combined = self.resolver._build_combined_prompt(prompts)
-        self._save_io(combined, "<!-- waiting -->", stage_key, suffix)
-        raw = self.resolver.call_llm(combined)
-        elapsed = time.time() - t0
-        self._timing[stage_key] = self._timing.get(stage_key, 0) + elapsed
-        self._save_io(combined, raw, stage_key, suffix)
         return raw
 
     def parse_ops(self, stage_key: str, raw: str) -> list[GraphOp]:
@@ -178,7 +166,7 @@ class PipelineEngine:
 
         t0 = time.time()
         prompt = self._build_prompt(stage, prompt_kwargs, label_map)
-        raw = self.call_llm(prompt, stage_key, suffix)
+        raw = await self.call_llm_async(prompt, stage_key, suffix)
         ops = self.parse_ops(stage_key, raw)
         validated = self.validate_ops(ops)
 
@@ -208,7 +196,7 @@ class PipelineEngine:
             return StageResult(key=stage_key, label="?", status="no_stage")
         t0 = time.time()
         prompt = self._build_prompt(stage, prompt_kwargs, label_map)
-        raw = self.call_llm(prompt, stage_key, suffix)
+        raw = await self.call_llm_async(prompt, stage_key, suffix)
         elapsed = time.time() - t0
         self._timing[stage_key] = self._timing.get(stage_key, 0) + elapsed
         return StageResult(
@@ -225,16 +213,57 @@ class PipelineEngine:
         """为 per-NPC 计划阶段单次 LLM 调用（手动 prompt 后调用）。"""
         stage = self._stages.get(stage_key)
         t0 = time.time()
-        self._save_io(prompt, "<!-- waiting -->", stage_key, suffix)
-        raw = self.resolver.call_llm(prompt)
+        raw = await self.call_llm_async(prompt, stage_key, suffix)
         elapsed = time.time() - t0
         self._timing[stage_key] = self._timing.get(stage_key, 0) + elapsed
-        self._save_io(prompt, raw, stage_key, suffix)
         return StageResult(
             key=stage_key, label=stage.label if stage else stage_key,
             raw=raw, time_s=elapsed,
             output_type=StageOutputType.RAW_TEXT,
         )
+
+    async def run_stage_plan_combined(
+        self,
+        npc_prompts: list[tuple[str, str]],
+        stage_key: str,
+        suffix: str = "",
+    ) -> dict[str, str]:
+        """
+        LLM #1: 合并多 NPC prompt 为一次 LLM 调用 → 按 NPC 解析结果。
+        通过 call_llm_async（统一入口）走，确保单点监控/计时。
+
+        Args:
+            npc_prompts: [(npc_entity_id, prompt_string), ...]
+            stage_key: 阶段标识（如 "plans"）
+            suffix: IO 文件后缀
+
+        Returns:
+            {npc_entity_id: plan_text}
+        """
+        t0 = time.time()
+        combined = self.resolver._build_combined_prompt(npc_prompts)
+        raw = await self.call_llm_async(combined, stage_key, suffix)
+        elapsed = time.time() - t0
+        self._timing[stage_key] = self._timing.get(stage_key, 0) + elapsed
+
+        results: dict[str, str] = {}
+        if not raw or not raw.strip():
+            logger.warning(f"[run_stage_plan_combined] LLM 返回空")
+            return results
+
+        parsed = self.resolver._parse_combined_response(raw)
+        if isinstance(parsed, dict):
+            for eid, instr in parsed.items():
+                if isinstance(instr, str) and instr.strip():
+                    results[eid] = instr
+                elif isinstance(instr, dict):
+                    action = instr.get("action", "") or instr.get("result_text", str(instr))
+                    results[eid] = action
+                else:
+                    logger.warning(f"NPC {eid} 指令格式无效: {type(instr).__name__}")
+
+        logger.info(f"[run_stage_plan_combined] {len(results)}/{len(npc_prompts)} 条计划")
+        return results
 
     # ─── 内部 ───
 

@@ -87,13 +87,14 @@ class InteractionLayer:
     输出：list[EdgeResult]（去重后的边级结果，description 为 LLM 生成的故事）
     """
 
-    def __init__(self, resolver=None, adapter=None):
+    def __init__(self, resolver=None, adapter=None, engine=None):
         self._resolver = resolver
         self._adapter = adapter  # VillageDomainAdapter
+        self._engine = engine  # PipelineEngine（统一 LLM 入口）
 
-    def process(self, exec_results: list[dict], graph_engine=None,
-                world_time_str: str | None = None,
-                tick_duration_str: str | None = None) -> list[EdgeResult]:
+    async def process(self, exec_results: list[dict], graph_engine=None,
+                       world_time_str: str | None = None,
+                       tick_duration_str: str | None = None) -> list[EdgeResult]:
         """
         输入：list[ExecutionResult.to_dict()]
         输出：list[EdgeResult]（去重后的边级结果，description 为 LLM 生成的故事）
@@ -114,7 +115,11 @@ class InteractionLayer:
                     world_time_str=world_time_str,
                     tick_duration_str=tick_duration_str,
                 )
-                story = self._resolver._call_llm(prompt) or ""
+                if self._engine:
+                    story = await self._engine.call_llm_async(prompt, "narrative") or ""
+                else:
+                    import asyncio
+                    story = await asyncio.to_thread(self._resolver._call_llm, prompt) or ""
                 for e in comp.edges:
                     e.description = story
         else:
