@@ -10,125 +10,151 @@
 
 ---
 
-> **EN**: A domain-agnostic, LLM-driven multi-agent simulation engine. The graph is the first principle: entities are nodes, relationships are edges, and LLMs reason over the topology to produce emergent behavior. All semantic knowledge lives in configuration — swap `domain.json` and the same engine simulates villages, protein networks, IoT grids, or fantasy economies.
+> **AgentWorld: A Domain-Agnostic, Graph-First, LLM-Driven Multi-Agent Simulation Engine**
 >
-> **CN**: 一个域无关的、LLM 驱动的多智能体仿真引擎。图拓扑是第一性原理——实体是节点、关系是边，LLM 在拓扑之上推理，产生涌现行为。所有语义知识都在配置文件中，切换 `domain.json`，同一个引擎可以模拟村庄、蛋白质网络、IoT 网格或幻想经济。
+> **EN**: The graph is the first principle — entities are nodes, relationships are edges, and LLMs reason over the topology to produce emergent behavior. **Topology–content decoupling** is the key innovation: the engine kernel operates on abstract, content-free node IDs, while all semantic knowledge lives in `domain.json`. This means swapping `domain.json` transforms the same engine into a village simulator, a protein interaction network, a fantasy economy, or an IoT sensor grid — **with zero code changes**. The system features a component-split pipeline that partitions the world by connected subgraph, enabling per-component parallel execution and isolated retry.
+>
+> **CN**: 图拓扑是第一性原理——实体是节点，关系是边，LLM 在拓扑之上推理产生涌现行为。**拓扑-内容解耦**是核心创新：引擎内核操作抽象的、无内容的节点 ID，所有语义知识存在于 `domain.json` 中。这意味着切换 `domain.json` 即可将同一个引擎转变为村庄模拟器、蛋白质交互网络、幻想经济或 IoT 传感器网格——**零代码改动**。系统采用分量分割管线，按连通子图划分世界，支持逐分量并行执行和隔离重试。
 
 ---
 
 ## Architecture Overview · 架构总览
 
+> **Figure 1.  AgentWorld system architecture.** The engine kernel (gray) is domain-agnostic — it operates on abstract graph topology with no knowledge of entity semantics. All domain content lives in `domain.json` (blue), injected into the pipeline via slot-based prompt assembly. The topology-content decoupling (bold dashed line) enables cross-domain transfer: swapping `domain.json` creates a new simulation world with zero code changes.
+
 ```mermaid
-flowchart LR
-    GE["📦 Graph Engine<br/><small>pure topology</small>"]
-    DB[("💾 DB /<br/>Persistence")]
-
-    subgraph P["Component-Split Pipeline · 分量分割管线"]
+flowchart TB
+    subgraph KERNEL["Domain-Agnostic Engine Kernel · 域无关引擎内核"]
         direction TB
-        L1["🤖 LLM #1<br/>Planning<br/>规划"]
-        L2["🤖 LLM #2<br/>Topo Structure<br/>拓扑结构"]
-        IE["⚙️ Intent Executor<br/>(code)"]
-        TL["🌉 Translation Layer<br/>翻译层<br/><small>abstact letters → NL</small>"]
-        CP["✂️ Component Split<br/>分量分割<br/><small>BFS per zone</small>"]
 
-        subgraph C0["Component 0 · 分量 0 (Zone A)"]
-            L3_0["🤖 LLM #3<br/>Narrative"]
-            L4a_0["🤖 LLM #4a<br/>Topo Delta"]
-            CV_0["⚙️ Conservation<br/>Validator"]
-            L4b_0["🤖 LLM #4b<br/>Content / Attr"]
-            L5_0["🤖 LLM #5<br/>Verification"]
-            retry_0{{"🔁 Retry (component only)<br/>仅重跑本分量"}}
-            L3_0 --> L4a_0 --> CV_0 --> L4b_0 --> L5_0
-            L5_0 -->|"❌"| retry_0 -.-> L3_0
+        DB[("Persistence Layer<br/>SQLite")]
+
+        GE["Graph Engine<br/><small>pure topology: entities=nodes, relationships=edges<br/>纯拓扑：实体=节点，关系=边</small>"]
+
+        subgraph PIPELINE["Seven-Stage LLM Pipeline · 七阶段 LLM 管线"]
+            direction TB
+
+            L1["LLM #1<br/>Planning<br/>规划"]
+            L2["LLM #2<br/>Topo Structure<br/>拓扑结构"]
+            IE["Intent Executor<br/>执行器<br/><small>code, not LLM</small>"]
+
+            subgraph COMP["Per-Component Pipeline × N<br/>逐分量管线（分量数取决于连通分量数）"]
+                direction TB
+                L3["LLM #3<br/>Narrative<br/>叙事"]
+                L4a["LLM #4a<br/>Topo Delta<br/>拓扑增量"]
+                CV["Conservation Validator<br/>度守恒校验<br/><small>Σ=0 check</small>"]
+                L4b["LLM #4b<br/>Content / Attr<br/>属性变化"]
+                L5["LLM #5<br/>Verification<br/>校验"]
+                RET{{"Retry (component only)<br/>仅重跑本分量"}}
+                L3 --> L4a --> CV --> L4b --> L5
+                L5 -->|"Fail"| RET -.-> L3
+            end
+
+            CP["Component Split<br/>分量分割<br/><small>BFS, zone-boundary-blocked</small>"]
+            MG["Merge + Apply<br/>归并 + 执行"]
         end
 
-        subgraph C1["Component 1 · 分量 1 (Zone B)"]
-            L3_1["🤖 LLM #3<br/>Narrative"]
-            L4a_1["🤖 LLM #4a<br/>Topo Delta"]
-            CV_1["⚙️ Conservation<br/>Validator"]
-            L4b_1["🤖 LLM #4b<br/>Content / Attr"]
-            L5_1["🤖 LLM #5<br/>Verification"]
-            retry_1{{"🔁 Retry (component only)"}}
-            L3_1 --> L4a_1 --> CV_1 --> L4b_1 --> L5_1
-            L5_1 -->|"❌"| retry_1 -.-> L3_1
-        end
-
-        MG["🔀 Merge · 归并<br/><small>aggregate all components</small>"]
+        DB --- GE
+        GE --> L1
+        L1 --> L2
+        L2 --> IE
+        IE --> CP
+        CP --> COMP
+        COMP -->|"Pass"| MG
+        MG --> GE
     end
 
-    DB --> GE
-    GE --> L1
-    L1 -->|"NL plans"| L2
-    L2 -->|"connect/disconnect"| IE
-    IE -->|"topo changes"| TL
-    TL -->|"translated topo"| CP
-    CP --> C0
-    CP --> C1
-    CP -.->|"... N components"| CX["..."]
-    C0 -->|"✅ valid"| MG
-    C1 -->|"✅ valid"| MG
-    CX --> MG
-    MG -->|"merged ops"| GE
-    GE --> DB
+    subgraph CONFIG["Domain-Specific Configuration · 域特定配置"]
+        DOMAIN["domain.json<br/><small>entity types, prompt slots,<br/>recipes, translation maps,<br/>conservation rules</small>"]
+        NODE["node_config.json<br/><small>node ontology, type hierarchy,<br/>role-to-prefix mapping</small>"]
+    end
 
+    TL["Translation Layer<br/>翻译层<br/><small>abstract letters → NL<br/>抽象标签 → 自然语言</small>"]
+    TL -.-> COMP
+
+    CONFIG -.->|"slot injection"| COMP
+    CONFIG -.->|"entity definitions"| GE
+
+    style KERNEL fill:#f5f5f5,stroke:#333,stroke-width:2px
+    style CONFIG fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,stroke-dasharray: 5 5
+    style TL fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px
+    style DB fill:#e0e0e0,stroke:#666
     style GE fill:#e0e0e0,stroke:#333
-    style L1 fill:#e1f5fe
-    style L2 fill:#fff3e0
-    style IE fill:#f5f5f5,stroke:#999
-    style TL fill:#e0f7fa,stroke:#00bcd4,stroke-width:2px
-    style CP fill:#b2dfdb,stroke:#00695c,stroke-width:2px
-    style MG fill:#b2dfdb,stroke:#00695c,stroke-width:2px
-    style L3_0 fill:#f3e5f5
-    style L4a_0 fill:#e8f5e9
-    style CV_0 fill:#fff9c4
-    style L4b_0 fill:#e8f5e9
-    style L5_0 fill:#ffebee
-    style retry_0 fill:#ffcdd2
-    style L3_1 fill:#f3e5f5
-    style L4a_1 fill:#e8f5e9
-    style CV_1 fill:#fff9c4
-    style L4b_1 fill:#e8f5e9
-    style L5_1 fill:#ffebee
-    style retry_1 fill:#ffcdd2
-    style CX fill:#eee,stroke:#999
-    style DB fill:#e0e0e0
+    style PIPELINE fill:#fafafa,stroke:#666,stroke-width:1px
+    style COMP fill:#fafafa,stroke:#666,stroke-width:1px,stroke-dasharray: 3 3
+    style DOMAIN fill:#bbdefb,stroke:#1565c0
+    style NODE fill:#bbdefb,stroke:#1565c0
+    style CP fill:#e0e0e0,stroke:#333
+    style MG fill:#e0e0e0,stroke:#333
+    style L1 fill:#e0e0e0
+    style L2 fill:#e0e0e0
+    style IE fill:#e0e0e0
+    style L3 fill:#e0e0e0
+    style L4a fill:#e0e0e0
+    style CV fill:#e0e0e0
+    style L4b fill:#e0e0e0
+    style L5 fill:#e0e0e0
+    style RET fill:#e0e0e0
 ```
 
 ---
 
-### Architecture Evolution · 架构进化
+### Pipeline Stage Details · 管线阶段详解
 
-**v1 (Serial pipeline):** Single global flow — 30+ entities in LLM #4a prompt, retry rebuilds everything.
+| Stage · 阶段 | Type · 类型 | Input · 输入 | Output · 输出 | Constraint · 约束强度 |
+|:----------|:----------|:-----------|:------------|:-------------------|
+| **#1 Plan · 规划** | LLM · 语言模型 | Entity state + topology · 实体状态+拓扑 | Natural language plan · NL 计划 | Free text · 自由文本 |
+| **#2 Topo Structure · 拓扑结构** | LLM · 语言模型 | All NPC plans · 所有 NPC 计划 | `connect`/`disconnect`/`set_qty` · 结构化 JSON | JSON schema · JSON 模式 |
+| **↳ Intent Executor · 执行器** | Code · 代码 | Topo ops · 拓扑操作 | Applied graph mutations · 图变更 | Deterministic · 确定性 |
+| **↳ Component Split · 分量分割** | Code · 代码 | Executed graph · 执行后图 | N connected components · N 个连通分量 | BFS, zone-blocked |
+| **#3 Narrative · 叙事** | LLM · 语言模型 | Translated topo + plans · 翻译后拓扑+计划 | Story per component · 逐分量故事 | Free text · 自由文本 |
+| **#4a Topo Delta · 拓扑增量** | LLM · 语言模型 | Stories + graph state · 故事+图状态 | `delta`/`system_delta`/`recipe` · 结构化 JSON | JSON schema + Σ=0 |
+| **↳ Conservation Validator · 守恒校验** | Code · 代码 | Delta ops | Pass / partial fail · 通过/部分失败 | Σ(delta)=0 per group |
+| **#4b Content · 属性变化** | LLM · 语言模型 | Stories + topo | `attr` deltas + `recent_info` · 属性+近况 | JSON schema |
+| **#5 Verification · 校验** | Code · 代码 | All outputs · 全部输出 | Pass → persist / Fail → retry component · 通过→落盘/失败→仅重跑本分量 | 6 registry checks |
+| **↳ Merge · 归并** | Code · 代码 | N component results · N 个分量结果 | Aggregated operations · 归并后操作 | Deterministic |
 
-**v2 (Component-split):** After LLM #2 and Intent Executor, the graph is split into connected components (one per zone). Each component runs independently through LLM #3 → #4a → #4b → #5. Failed components retry alone. LLM #4a prompt drops from 30+ to 3–8 entities.
+---
+
+## Topology–Content Decoupling · 拓扑-内容解耦
+
+> **Figure 2.  The core design principle: topology and content are separately defined and independently evolvable.** The engine operates on abstract node IDs (e.g., `npc_a1b2c3d`) with type tags (`type_id: 2 → "npc"`) read from config. Entity names, descriptions, and semantic roles live in `domain.json`. This decoupling means the exact same engine can simulate a Witcher village, a protein interaction network, or a fantasy economy — only the config changes.
 
 ```
-LLM #1 → #2 → 执行 → 分量分割 → 分量0 #3→#4a→#4b→#5
-                                → 分量1 #3→#4a→#4b→#5  (可并行)
-                                → ... → 归并 → 执行
+┌──────────────────────────────────────────────────────────────────┐
+│                    AgentWorld Engine Kernel                      │
+│  (domain-agnostic · 域无关)                                       │
+│                                                                  │
+│  entity_id: npc_a1b2c3d    type_id: 2    edges: {zone_4, ...}   │
+│  └── hashed, content-free  └── config key  └── pure topology    │
+│                                                                  │
+│  ═══════════════════════ Decoupling Boundary ═══════════════════ │
+│                         解耦边界                                   │
+│                                                                  │
+│  name: "杰洛特"    role: "witcher"   satiety: 45                 │
+│  desc: "白发猎魔人，背负试炼的痛苦"                                   │
+│  └── all from domain.json · 全部来自配置                           │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-**Key benefits · 核心收益:**
-- LLM #4a prompt: 30+ 实体 → 3~8 实体（LLM 不再超容量）
-- Retry cost: 250s → ~50s（只重跑小分量）
-- Future parallel: ~650s → ~200s
-- Story↔topo 一致（失败分量连带重跑 LLM #3）
+### Why This Matters for Cross-Domain Transfer · 跨域迁移的意义
 
-### Stage Details · 阶段详解
+Traditional multi-agent simulation engines hardcode domain logic:
+- A "village simulator" can't simulate protein folding without rewriting core code
+- A "fantasy economy" engine can't simulate an IoT sensor network
 
-| Stage · 阶段 | Input · 输入 | Output · 输出 | 
-|:------------|:-------------|:--------------|
-| **#1 Plan · 规划** | Entity states + topology · 实体状态+拓扑 | Natural language plan · NL 计划 |
-| **#2 Topo Structure · 拓扑结构** | All plans · 所有计划 | `connect`/`disconnect`/`set_qty` |
-| **↳ Intent Executor (code)** | Topo ops · 拓扑操作 | Applied graph mutations · 图变更 |
-| **🌉 Translation Layer · 翻译层** | Abstract topo letters · 抽象字母拓扑 | NL-translated topology · 自然语言拓扑 |
-| **✂️ Component Split** | Translated topo + plans · 翻译后拓扑+计划 | N connected components · N 个连通分量 |
-| **#3 Narrative · 叙事** | Translated topo + plans · 翻译后拓扑+计划 | Story per component · 逐连通分量故事 |
-| **#4a Topo Delta · 拓扑增量** | Stories + graph state · 故事+图状态 | `delta`/`system_delta`/`recipe` ops |
-| **↳ Conservation Validator · 守恒校验** | Delta ops | Pass / partial-fail (per group) |
-| **#4b Content · 属性变化** | Stories + topo | `attr` deltas + `recent_info` |
-| **#5 Verification · 校验** | All outputs · 全部输出 | Pass → merge & persist / Fail → retry component only · 通过→归并落盘/失败→仅重跑失败分量 |
-| **🔀 Merge · 归并** | All component results · 全部分量结果 | Aggregated final operations · 归并后最终操作 |
+AgentWorld's decoupling eliminates this: the engine never inspects entity content.
+
+| Domain · 域 | domain.json content · 配置内容 | Engine changes · 引擎改动 |
+|:-----------|:-----------------------------|:------------------------|
+| 🏘️ **Witcher village** · 猎魔人村庄 | NPCs: 杰洛特/叶奈法/希里; Items: 金币/草药/剑; Zones: 维吉玛/Oxenfurt | **Zero** · 零改动 |
+| 🧬 **Protein network** · 蛋白质网络 | Nodes: proteins/reactions; Edges: phosphorylation binding; Attributes: concentration, activation state | **Zero** · 零改动 |
+| 🌾 **Fantasy economy** · 幻想经济 | Entities: cities/trade routes/resources; Recipes: craft/smith/gather | **Zero** · 零改动 |
+| 🌡️ **IoT sensor grid** · IoT 传感器 | Entities: sensors/actuators/gateways; Attributes: temperature, humidity; Relationships: controls/reports-to | **Zero** · 零改动 |
+
+The engine's verification layer, conservation rules, and component split are all type-config-driven. Adding a new domain is purely a configuration exercise.
+
+引擎的校验层、度守恒规则、分量分割全部由类型配置驱动。新增域纯属配置工作。
 
 ---
 
@@ -366,6 +392,61 @@ src/agent_world/
 ```
 
 > See [`WITCHER_WORLD.md`](WITCHER_WORLD.md) for the built-in example domain (Witcher universe).
+
+---
+
+## Cross-Domain Portability · 跨域可移植性
+
+> **Figure 3.  One engine, multiple worlds.** The domain-agnostic kernel stays identical across all deployments. Only the configuration package changes. This is enabled by the topology-content decoupling boundary — the engine never inspects entity semantics.
+
+```mermaid
+flowchart TB
+    KERNEL["AgentWorld Engine Kernel<br/><small>identical codebase · 同一份代码</small>"]
+
+    subgraph W1["World 1: Witcher Village · 猎魔人村庄"]
+        CFG1["domain.json<br/><small>npc: witcher, sorceress, bard<br/>item: gold, herbs, swords<br/>recipe: alchemy, smithing</small>"]
+    end
+
+    subgraph W2["World 2: Protein Network · 蛋白质网络"]
+        CFG2["domain.json<br/><small>node: protein, enzyme, substrate<br/>edge: phosphorylation, binding<br/>attr: concentration, active_site</small>"]
+    end
+
+    subgraph W3["World 3: Fantasy Economy · 幻想经济"]
+        CFG3["domain.json<br/><small>entity: city, trader, route<br/>resource: wood, stone, gold<br/>recipe: craft, trade, tax</small>"]
+    end
+
+    subgraph W4["World 4: IoT Grid · 传感器网络"]
+        CFG4["domain.json<br/><small>node: sensor, actuator, gateway<br/>edge: controls, reports_to<br/>attr: temperature, humidity</small>"]
+    end
+
+    KERNEL -.-> W1
+    KERNEL -.-> W2
+    KERNEL -.-> W3
+    KERNEL -.-> W4
+
+    style KERNEL fill:#f5f5f5,stroke:#333,stroke-width:2px
+    style W1 fill:#e3f2fd,stroke:#1565c0
+    style W2 fill:#f3e5f5,stroke:#7b1fa2
+    style W3 fill:#e8f5e9,stroke:#2e7d32
+    style W4 fill:#fff3e0,stroke:#e65100
+```
+
+### What Changes Per Domain · 跨域需要改什么
+
+| Layer · 层 | Change needed · 需要改吗 | Details · 细节 |
+|:----------|:----------------------|:-------------|
+| **Graph Engine** | ❌ None · 无 | Same topology kernel, same BFS, same edge operations |
+| **Pipeline Orchestrator** | ❌ None · 无 | Same LLM #1–#5 flow, same component split, same retry logic |
+| **Verification System** | ❌ None · 无 | Same registry checks — driven by config mask |
+| **Conservation Rules** | ❌ None · 无 | Σ=0 enforced by type tags, not hardcoded |
+| **Translation Layer** | ❌ None · 无 | Abstract letters → NL, domain-agnostic by design |
+| **Prompt Assembly** | ❌ None · 无 | Slot structure unchanged; domain.json fills content slots |
+| **`domain.json`** | 🔄 Replace entirely | All entity definitions, prompt templates, recipes, constraints |
+| **`node_config.json`** | 🔄 Replace entirely | Node type ontology, role-to-prefix mapping, terminal/block rules |
+
+**The boundary is clear**: everything above the line is one `.json` file swap. Everything below is a reusable kernel.
+
+**边界清晰**：线以上是改一个 `.json` 文件的事。线以下是可复用的通用引擎内核。
 
 ---
 
