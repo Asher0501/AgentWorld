@@ -174,15 +174,35 @@ class GraphNPCEngine:
         all_objects = mgr.all()
         zones = self._get_zones()
 
-        # 2. 从头构建纯拓扑图（无接口边）
-        entities = build_world_graph(db_npcs, all_objects, zones, mgr)
+        # 2a. 加载物品和配方配置
+        from ..config.config_loader import get_items, get_domain_zones
+        from ..config.config_loader import _load_domain as _load_domain_json
+        item_configs = get_items()
+        recipes_configs = _load_domain_json().get("recipes", [])
+        raw_zone_configs = get_domain_zones()  # dict 格式的区域配置
+
+        # 2b. 从头构建纯拓扑图（无接口边）
+        entities = build_world_graph(db_npcs, all_objects, zones,
+                                     items=item_configs, recipes=recipes_configs, mgr=mgr)
         self.graph_engine = GraphEngine()
         for ent in entities.values():
             self.graph_engine.register_entity(ent)
 
-        # 3. 创建初始拓扑边（库存 + 区域 + 区域互联）
-        from .graph_adapter import init_graph_edges_from_adapter
+        # 3a. 创建初始拓扑边（库存 + 区域 + 区域互联）
+        from .graph_adapter import init_graph_edges_from_adapter, process_config_edges
         init_graph_edges_from_adapter(self.graph_engine, db_npcs, zones)
+
+        # 3b. 从 connected_nodes 补充图边
+        # 加载 NPC dict 配置（含 connected_nodes）
+        from ..config.config_loader import get_npc_defs
+        npc_dict_configs = get_npc_defs()
+        process_config_edges(
+            self.graph_engine,
+            npc_config_dicts=npc_dict_configs,
+            item_config_dicts=item_configs,
+            zone_config_dicts=raw_zone_configs,
+            recipe_config_dicts=recipes_configs,
+        )
 
         # 4. 4-LLM 流水线
         if self.llm_available:

@@ -16,12 +16,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from agent_world.config.node_ontology import (
-    prefix_to_type_id_wrap as _prefix_to_tid,
+from agent_world.config.config_loader import (
+    prefix_to_type_id as _prefix_to_tid,
     is_terminal,
     is_same_type_blocked as _same_type_blocked,
+    get_type_def as _get_type_def,
 )
-from agent_world.config.config_loader import get_type_def as _get_type_def
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,7 @@ class Entity:
         self.connected_entity_ids: set[str] = set()  # 连接的节点 ID 集合
         self.recent_info: str = ""  # 近况投影（LLM #4b 写入，类型无关）
         self.conserved: bool = False  # 是否为守恒量（度守恒校验用）
+        self.space: str = "physical"  # 空间类型: "physical" | "abstract"
 
         # 半结构化自我描述
         self.role: str = ""       # 角色（用于 NPC/Entity）

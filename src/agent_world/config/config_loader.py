@@ -221,11 +221,6 @@ def get_items() -> list[dict]:
     return _ENTITIES.get("items", [])
 
 
-def get_objects() -> list[dict]:
-    """获取所有物件定义"""
-    _load()
-    return _ENTITIES.get("objects", [])
-
 
 def get_entity(category: str, eid: str) -> dict | None:
     """按类别和 ID 查实体"""
@@ -247,26 +242,10 @@ def get_all_zone_connections() -> dict[str, list[str]]:
     return dict(_ZONE_CONNECTIONS)
 
 
-def get_zone_bounds(zone_id: str) -> dict:
-    """获取区域边界"""
-    _load()
-    z = _ENTITY_INDEX.get("zones", {}).get(zone_id, {})
-    return z.get("bounds", {"min_x": 0, "min_y": 0, "max_x": 100, "max_y": 100})
-
-
-def get_zone_capacity(zone_id: str) -> int:
-    """获取区域容量"""
-    _load()
-    z = _ENTITY_INDEX.get("zones", {}).get(zone_id, {})
     return z.get("capacity", 20)
 
 
 # ─── 世界配置 ───
-
-def get_world_default_time() -> dict:
-    """获取世界默认时间"""
-    _load()
-    return _WORLD_CONFIG.get("default_time", {"hour": 8, "minute": 0, "day": 1, "month": 1, "year": 1})
 
 
 def get_world_config(key: str, default=None):
@@ -351,11 +330,6 @@ def get_npc_def(name: str) -> dict | None:
 
 # ─── 提示词辅助（显示类型名，仅用于 LLM 提示——引擎自身不用）───
 
-def _type_name(type_id: int) -> str:
-    """仅供内部调试/提示词使用。引擎代码不应依赖此函数。"""
-    _load()
-    return _TYPE_DEFS.get(type_id, {}).get("id", "unknown")
-
 
 # ─── domain.json 加载（域特定内容）───
 
@@ -378,19 +352,7 @@ def get_domain_zones() -> list[dict]:
     return _load_domain().get("zones", [])
 
 
-def get_domain_recipes() -> list[dict]:
-    """返回 domain.json 中的配方定义列表"""
-    return _load_domain().get("recipes", [])
 
-
-def get_domain_npc_zones() -> dict[str, str]:
-    """返回 domain.json 中 NPC 初始区域映射 {npc_name: zone_id}"""
-    return _load_domain().get("npc_initial_zones", {})
-
-
-def get_domain_adapter() -> dict:
-    """返回 domain.json 中的 adapter 段（所有 slot 文本）"""
-    return _load_domain().get("adapter", {})
 
 
 # ─── 初始化（显示加载状态）───

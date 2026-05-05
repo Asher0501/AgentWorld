@@ -39,43 +39,93 @@
       "id": "white_orchard",
       "name": "白果园",
       "zone_type": "white_orchard",
-      "description": "泰莫利亚北境的小村庄，战争留下的弹坑长出了野花。"
+      "description": "泰莫利亚北境的小村庄，战争留下的弹坑长出了野花。",
+      "space": "physical",
+      "connected_nodes": [
+        "zone:狐狸与鹅酒馆",
+        "npc:杰洛特",
+        "npc:托蜜拉",
+        "item:草药",
+        "item:食物"
+      ]
     },
     {
       "id": "fox_and_goose",
       "name": "狐狸与鹅酒馆",
       "zone_type": "tavern",
-      "description": "白果园最热闹的酒馆。"
+      "description": "白果园最热闹的酒馆。",
+      "space": "physical",
+      "connected_nodes": [
+        "zone:白果园",
+        "npc:丹德里恩",
+        "npc:莎拉"
+      ]
     },
     {
       "id": "novigrad",
       "name": "诺维格瑞",
       "zone_type": "market_square",
-      "description": "北方最大的自由城邦，港口繁忙，商贾云集。"
+      "description": "北方最大的自由城邦，港口繁忙，商贾云集。",
+      "space": "physical",
+      "connected_nodes": [
+        "zone:奥森弗特",
+        "zone:维吉玛",
+        "npc:卓尔坦",
+        "npc:哈托里",
+        "npc:乞丐王"
+      ]
     },
     {
       "id": "oxenfurt",
       "name": "奥森弗特",
       "zone_type": "library",
-      "description": "北方最古老的大学城。"
+      "description": "北方最古老的大学城。",
+      "space": "physical",
+      "connected_nodes": [
+        "zone:诺维格瑞",
+        "zone:凯尔莫罕",
+        "npc:特莉丝",
+        "npc:凯拉"
+      ]
     },
     {
       "id": "kaer_morhen",
       "name": "凯尔莫罕",
       "zone_type": "kaer_morhen",
-      "description": "群山之中的猎魔人要塞。"
+      "description": "群山之中的猎魔人要塞。",
+      "space": "physical",
+      "connected_nodes": [
+        "zone:奥森弗特",
+        "zone:史凯利格",
+        "npc:希里",
+        "npc:维瑟米尔",
+        "item:草药"
+      ]
     },
     {
       "id": "vizima",
       "name": "维吉玛",
       "zone_type": "temple",
-      "description": "泰莫利亚王国的首都。"
+      "description": "泰莫利亚王国的首都。",
+      "space": "physical",
+      "connected_nodes": [
+        "zone:诺维格瑞",
+        "zone:史凯利格",
+        "npc:叶奈法",
+        "npc:市集商贩",
+        "item:食物"
+      ]
     },
     {
       "id": "skellige",
       "name": "史凯利格",
       "zone_type": "harbor",
-      "description": "北海群岛的港口。"
+      "description": "北海群岛的港口。",
+      "space": "physical",
+      "connected_nodes": [
+        "zone:维吉玛",
+        "item:食物"
+      ]
     }
   ],
   "recipes": [
@@ -91,7 +141,9 @@
         "魔药": 1
       },
       "vitality_cost": 5,
-      "description": "在研钵中研磨草药配合炼金溶剂制成魔药"
+      "description": "在研钵中研磨草药配合炼金溶剂制成魔药",
+      "space": "abstract",
+      "connected_nodes": []
     },
     {
       "name": "冶炼矿石",
@@ -105,7 +157,9 @@
         "武器": 1
       },
       "vitality_cost": 8,
-      "description": "在铁砧上冶炼矿石锻造武器"
+      "description": "在铁砧上冶炼矿石锻造武器",
+      "space": "abstract",
+      "connected_nodes": []
     },
     {
       "name": "烹饪炖菜",
@@ -120,7 +174,9 @@
         "食物": 3
       },
       "vitality_cost": 5,
-      "description": "用壁炉和草药炖煮香浓的肉菜羹"
+      "description": "用壁炉和草药炖煮香浓的肉菜羹",
+      "space": "abstract",
+      "connected_nodes": []
     },
     {
       "name": "酿造麦酒",
@@ -134,7 +190,9 @@
         "酒": 2
       },
       "vitality_cost": 8,
-      "description": "用壁炉发酵酿造麦酒"
+      "description": "用壁炉发酵酿造麦酒",
+      "space": "abstract",
+      "connected_nodes": []
     },
     {
       "name": "附魔饰品",
@@ -149,7 +207,9 @@
         "魔法饰品": 1
       },
       "vitality_cost": 10,
-      "description": "用星辉石在魔法饰品上施加祝福附魔"
+      "description": "用星辉石在魔法饰品上施加祝福附魔",
+      "space": "abstract",
+      "connected_nodes": []
     },
     {
       "name": "装订法术书",
@@ -161,7 +221,9 @@
         "法术书": 1
       },
       "vitality_cost": 6,
-      "description": "将古籍残页整理装订成册"
+      "description": "将古籍残页整理装订成册",
+      "space": "abstract",
+      "connected_nodes": []
     }
   ],
   "adapter": {

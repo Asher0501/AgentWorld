@@ -270,67 +270,136 @@
         "id": "草药",
         "name": "草药",
         "type": "item",
-        "description": "采集的草药，是炼金术的基础原料"
+        "description": "采集的草药，是炼金术的基础原料",
+        "space": "physical",
+        "connected_nodes": [
+          "zone:白果园",
+          "zone:凯尔莫罕",
+          "npc:托蜜拉",
+          "npc:维瑟米尔"
+        ]
       },
       {
         "id": "魔药",
         "name": "魔药",
         "type": "item",
-        "description": "炼金术士调配的强力药水，战斗前服用能大幅提升能力"
+        "description": "炼金术士调配的强力药水，战斗前服用能大幅提升能力",
+        "space": "physical",
+        "connected_nodes": [
+          "npc:杰洛特",
+          "npc:特莉丝",
+          "npc:维瑟米尔"
+        ]
       },
       {
         "id": "矿石",
         "name": "矿石",
         "type": "item",
-        "description": "矮人矿坑里挖出的优质铁矿石，锻造武器的好原料"
+        "description": "矮人矿坑里挖出的优质铁矿石，锻造武器的好原料",
+        "space": "physical",
+        "connected_nodes": [
+          "npc:卓尔坦",
+          "npc:哈托里"
+        ]
       },
       {
         "id": "武器",
         "name": "武器",
         "type": "item",
-        "description": "铁匠打造的刀剑和铠甲，猎魔人和佣兵的饭碗"
+        "description": "铁匠打造的刀剑和铠甲，猎魔人和佣兵的饭碗",
+        "space": "physical",
+        "connected_nodes": [
+          "npc:杰洛特",
+          "npc:哈托里",
+          "npc:希里",
+          "npc:维瑟米尔"
+        ]
       },
       {
         "id": "魔法饰品",
         "name": "魔法饰品",
         "type": "item",
-        "description": "附有微弱魔力的装饰品，贵族们喜欢收藏"
+        "description": "附有微弱魔力的装饰品，贵族们喜欢收藏",
+        "space": "physical",
+        "connected_nodes": [
+          "npc:叶奈法"
+        ]
       },
       {
         "id": "法术书",
         "name": "法术书",
         "type": "item",
-        "description": "记载着古老咒语的知识典籍，学者们梦寐以求"
+        "description": "记载着古老咒语的知识典籍，学者们梦寐以求",
+        "space": "physical",
+        "connected_nodes": [
+          "npc:特莉丝",
+          "npc:凯拉"
+        ]
       },
       {
         "id": "食物",
         "name": "食物",
         "type": "item",
-        "description": "烤面包、炖肉和干酪，在猎魔人世界里吃饱才是硬道理"
+        "description": "烤面包、炖肉和干酪，在猎魔人世界里吃饱才是硬道理",
+        "space": "physical",
+        "connected_nodes": [
+          "zone:白果园",
+          "zone:维吉玛",
+          "zone:史凯利格",
+          "npc:莎拉",
+          "npc:市集商贩"
+        ]
       },
       {
         "id": "酒",
         "name": "酒",
         "type": "item",
-        "description": "麦酒和蜂蜜酒，疲惫时来一杯能让你忘记大半天的糟心事"
+        "description": "麦酒和蜂蜜酒，疲惫时来一杯能让你忘记大半天的糟心事",
+        "space": "physical",
+        "connected_nodes": [
+          "npc:莎拉",
+          "npc:市集商贩"
+        ]
       },
       {
         "id": "星辉石",
         "name": "星辉石",
         "type": "item",
-        "description": "月光下凝结的魔力晶石，附魔和炼金的上等媒介"
+        "description": "月光下凝结的魔力晶石，附魔和炼金的上等媒介",
+        "space": "physical",
+        "connected_nodes": []
       },
       {
         "id": "古籍残页",
         "name": "古籍残页",
         "type": "item",
-        "description": "古代文献的残片，记载着已失传的知识和咒语"
+        "description": "古代文献的残片，记载着已失传的知识和咒语",
+        "space": "physical",
+        "connected_nodes": [
+          "npc:乞丐王"
+        ]
       },
       {
         "id": "金币",
         "name": "金币",
         "type": "item",
-        "description": "通用货币，红彤彤的克朗，整个北方王国都认这个"
+        "description": "通用货币，红彤彤的克朗，整个北方王国都认这个",
+        "space": "physical",
+        "connected_nodes": [
+          "npc:杰洛特",
+          "npc:托蜜拉",
+          "npc:丹德里恩",
+          "npc:莎拉",
+          "npc:卓尔坦",
+          "npc:哈托里",
+          "npc:乞丐王",
+          "npc:特莉丝",
+          "npc:凯拉",
+          "npc:希里",
+          "npc:维瑟米尔",
+          "npc:叶奈法",
+          "npc:市集商贩"
+        ]
       }
     ],
     "objects": [],
@@ -369,13 +438,14 @@
     "npcs": [
       {
         "name": "杰洛特",
-        "role": "wanderer",
+        "role": "witcher",
         "zone": "white_orchard",
         "vitality": 85,
         "satiety": 45,
         "mood": 55,
         "inventory": {
           "武器": 1,
+          "魔药": 2,
           "金币": 8
         },
         "recent_info": "刚在白果园完成了一个水鬼委托，拿到了报酬。银剑需要磨一磨了，魔药也快用完了。",
@@ -402,11 +472,19 @@
           "special_traits": [
             "突变者"
           ]
-        }
+        },
+        "space": "physical",
+        "connected_nodes": [
+          "zone:白果园",
+          "item:武器",
+          "item:魔药",
+          "item:金币",
+          "recipe:研磨魔药"
+        ]
       },
       {
         "name": "丹德里恩",
-        "role": "merchant",
+        "role": "bard",
         "zone": "fox_and_goose",
         "vitality": 80,
         "satiety": 60,
@@ -438,16 +516,22 @@
           "special_traits": [
             "好色"
           ]
-        }
+        },
+        "space": "physical",
+        "connected_nodes": [
+          "zone:狐狸与鹅酒馆",
+          "item:金币"
+        ]
       },
       {
         "name": "希里",
-        "role": "wanderer",
+        "role": "witcher_apprentice",
         "zone": "kaer_morhen",
         "vitality": 70,
         "satiety": 35,
         "mood": 50,
         "inventory": {
+          "武器": 1,
           "金币": 10
         },
         "recent_info": "在凯尔莫罕外面训练了一整个早上，剑术长进不少。肚子饿得咕咕叫，维瑟米尔说先练完才能吃东西。",
@@ -474,11 +558,17 @@
           "special_traits": [
             "上古之血"
           ]
-        }
+        },
+        "space": "physical",
+        "connected_nodes": [
+          "zone:凯尔莫罕",
+          "item:武器",
+          "item:金币"
+        ]
       },
       {
         "name": "卓尔坦",
-        "role": "merchant",
+        "role": "dwarf_merchant",
         "zone": "novigrad",
         "vitality": 100,
         "satiety": 55,
@@ -511,17 +601,24 @@
           "special_traits": [
             "矮人"
           ]
-        }
+        },
+        "space": "physical",
+        "connected_nodes": [
+          "zone:诺维格瑞",
+          "item:矿石",
+          "item:金币"
+        ]
       },
       {
         "name": "哈托里",
-        "role": "artisan",
+        "role": "elven_blacksmith",
         "zone": "novigrad",
         "vitality": 95,
         "satiety": 50,
         "mood": 55,
         "inventory": {
-          "武器": 2,
+          "矿石": 5,
+          "武器": 1,
           "金币": 5
         },
         "recent_info": "战争期间打造的武器积压了不少库存，现在需要好矿石来锻造新的装备。老主顾们的订单已经排到下周了。",
@@ -545,17 +642,26 @@
             "专注",
             "老实"
           ]
-        }
+        },
+        "space": "physical",
+        "connected_nodes": [
+          "zone:诺维格瑞",
+          "item:矿石",
+          "item:武器",
+          "item:金币",
+          "recipe:冶炼矿石"
+        ]
       },
       {
         "name": "特莉丝",
-        "role": "healer",
+        "role": "sorceress",
         "zone": "oxenfurt",
         "vitality": 85,
         "satiety": 50,
         "mood": 60,
         "inventory": {
-          "魔药": 5,
+          "法术书": 2,
+          "魔药": 3,
           "金币": 8
         },
         "recent_info": "在炼金小屋里忙着调配新的魔药。草药快用完了，需要托蜜拉或维瑟米尔送新的来。前线退下来的伤兵还需要更多药水。",
@@ -582,11 +688,20 @@
           "special_traits": [
             "术士"
           ]
-        }
+        },
+        "space": "physical",
+        "connected_nodes": [
+          "zone:奥森弗特",
+          "item:法术书",
+          "item:魔药",
+          "item:金币",
+          "recipe:附魔饰品",
+          "recipe:装订法术书"
+        ]
       },
       {
         "name": "托蜜拉",
-        "role": "farmer",
+        "role": "herbalist",
         "zone": "white_orchard",
         "vitality": 90,
         "satiety": 55,
@@ -616,11 +731,18 @@
             "耐心",
             "纯朴"
           ]
-        }
+        },
+        "space": "physical",
+        "connected_nodes": [
+          "zone:白果园",
+          "item:草药",
+          "item:金币",
+          "recipe:研磨魔药"
+        ]
       },
       {
         "name": "莎拉",
-        "role": "merchant",
+        "role": "tavern_owner",
         "zone": "fox_and_goose",
         "vitality": 100,
         "satiety": 65,
@@ -651,11 +773,20 @@
             "精明",
             "嗓门大"
           ]
-        }
+        },
+        "space": "physical",
+        "connected_nodes": [
+          "zone:狐狸与鹅酒馆",
+          "item:食物",
+          "item:酒",
+          "item:金币",
+          "recipe:烹饪炖菜",
+          "recipe:酿造麦酒"
+        ]
       },
       {
         "name": "叶奈法",
-        "role": "farmer",
+        "role": "sorceress",
         "zone": "vizima",
         "vitality": 80,
         "satiety": 50,
@@ -688,11 +819,18 @@
           "special_traits": [
             "术士"
           ]
-        }
+        },
+        "space": "physical",
+        "connected_nodes": [
+          "zone:维吉玛",
+          "item:魔法饰品",
+          "item:金币",
+          "recipe:附魔饰品"
+        ]
       },
       {
         "name": "凯拉",
-        "role": "scholar",
+        "role": "sorceress",
         "zone": "oxenfurt",
         "vitality": 75,
         "satiety": 50,
@@ -722,11 +860,19 @@
             "健谈",
             "容易分心"
           ]
-        }
+        },
+        "space": "physical",
+        "connected_nodes": [
+          "zone:奥森弗特",
+          "item:法术书",
+          "item:金币",
+          "recipe:附魔饰品",
+          "recipe:装订法术书"
+        ]
       },
       {
         "name": "乞丐王",
-        "role": "guard",
+        "role": "beggar_king",
         "zone": "novigrad",
         "vitality": 90,
         "satiety": 60,
@@ -759,17 +905,25 @@
           "special_traits": [
             "独眼"
           ]
-        }
+        },
+        "space": "physical",
+        "connected_nodes": [
+          "zone:诺维格瑞",
+          "item:古籍残页",
+          "item:金币"
+        ]
       },
       {
         "name": "维瑟米尔",
-        "role": "farmer",
+        "role": "witcher",
         "zone": "kaer_morhen",
         "vitality": 85,
         "satiety": 50,
         "mood": 70,
         "inventory": {
+          "武器": 1,
           "草药": 10,
+          "魔药": 2,
           "金币": 6
         },
         "recent_info": "在凯尔莫罕外围的山坡上采了不少蓍草和鼠尾草。希里的训练进度让人欣慰。这些草药可以卖给特莉丝换几个金币。",
@@ -796,11 +950,20 @@
           "special_traits": [
             "狼学派"
           ]
-        }
+        },
+        "space": "physical",
+        "connected_nodes": [
+          "zone:凯尔莫罕",
+          "item:武器",
+          "item:草药",
+          "item:魔药",
+          "item:金币",
+          "recipe:研磨魔药"
+        ]
       },
       {
         "name": "市集商贩",
-        "role": "merchant",
+        "role": "vendor",
         "zone": "vizima",
         "vitality": 70,
         "satiety": 65,
@@ -834,7 +997,14 @@
           "special_traits": [
             "本地人"
           ]
-        }
+        },
+        "space": "physical",
+        "connected_nodes": [
+          "zone:维吉玛",
+          "item:食物",
+          "item:酒",
+          "item:金币"
+        ]
       }
     ]
   },

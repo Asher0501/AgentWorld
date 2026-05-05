@@ -424,7 +424,7 @@ class InteractionLayer:
             parts.append(build_label_mapping_text(label_map, graph_engine))
             parts.append("")
             parts.append("拓扑约束：故事内容不得超出上述边的定义范围。")
-            parts.append("例如，若 {A} 无 → {Y} 边，则 {A} 对应的角色在故事中不能与 {Y} 发生交互。")
+            parts.append("例如，若某节点无连接到另一节点的边，则该节点对应的角色在故事中不能与另一节点发生交互。")
         if component.edges:
             parts.append("")
             for e in component.edges:

@@ -33,6 +33,88 @@ def _has_role(tid: str, role: str) -> bool:
     return has_role(tid, role)
 
 
+def _parse_topostruct_ops(raw: str, label_map: dict[str, str]) -> list[GraphOp]:
+    """解析 LLM #2 输出，用 label_map 将单字母标签 {A} 解析回 entity_id。"""
+    tag_to_eid = dict(label_map)
+
+    def _resolve(val):
+        if not val:
+            return val
+        stripped = val.strip("{}")
+        if stripped in tag_to_eid:
+            return tag_to_eid[stripped]
+        return val
+
+    import re as _re
+    raw = raw.strip()
+    # 提取第一个 JSON 对象/数组
+    m = _re.search(r'[\[{]', raw)
+    if not m:
+        return []
+    raw = raw[m.start():]
+    # 找匹配的闭合括号
+    depth = 0
+    end = 0
+    for i, ch in enumerate(raw):
+        if ch in '{[':
+            depth += 1
+        elif ch in '}]':
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    json_str = raw[:end] if end else raw
+    try:
+        parsed = json.loads(json_str)
+    except json.JSONDecodeError:
+        logger.warning(f"[LLM #2] JSON 解析失败，原始输出: {raw[:200]}")
+        return []
+
+    ops: list[GraphOp] = []
+
+    if isinstance(parsed, dict):
+        if "operations" in parsed and isinstance(parsed["operations"], (dict, list)):
+            sub = parsed["operations"]
+            if isinstance(sub, list):
+                for op in sub:
+                    if isinstance(op, dict):
+                        op["src"] = _resolve(op.get("src", ""))
+                        op["tgt"] = _resolve(op.get("tgt", ""))
+                        ops.append(op)
+            else:
+                for key, npc_ops in sub.items():
+                    if isinstance(npc_ops, list):
+                        for op in npc_ops:
+                            if isinstance(op, dict):
+                                op["src"] = _resolve(op.get("src", key))
+                                op["tgt"] = _resolve(op.get("tgt", ""))
+                                ops.append(op)
+        else:
+            for key, npc_ops in parsed.items():
+                if isinstance(npc_ops, list):
+                    for op in npc_ops:
+                        if isinstance(op, dict):
+                            op["src"] = _resolve(op.get("src", key))
+                            op["tgt"] = _resolve(op.get("tgt", ""))
+                            ops.append(op)
+
+    if isinstance(parsed, list):
+        for op in parsed:
+            if isinstance(op, dict):
+                op["src"] = _resolve(op.get("src", ""))
+                op["tgt"] = _resolve(op.get("tgt", ""))
+                ops.append(op)
+
+    valid_ops = []
+    for op in ops:
+        if op.get("op") in ("connect", "disconnect", "set_qty"):
+            if op.get("src") and op.get("tgt"):
+                valid_ops.append(op)
+
+    logger.info(f"[LLM #2] 解析到 {len(valid_ops)}/{len(ops)} 有效操作")
+    return valid_ops
+
+
 def _get_zone_name(entity, ge) -> str:
     """获取实体所在区域名称。"""
     if ge:
@@ -751,6 +833,7 @@ class NPCWorldAdapter(DomainAdapter):
     # ── LLM #2：全局标签映射 ──
 
     def build_global_label_map(self, graph) -> dict[str, str]:
+        """构建单字母标签 → entity_id 映射，供 prompt 展示和 parser 解析。"""
         result: dict[str, str] = {}
         region_ents = []
         npc_ents = []

@@ -18,7 +18,7 @@ from copy import deepcopy
 from typing import Any
 
 from ..entities.base_entity import Entity
-from ..config.node_ontology import prefix_to_type_id
+from ..config.config_loader import prefix_to_type_id
 from ..config.config_loader import has_role, get_type_def
 from ..models.interaction import InteractionGraph, InteractionEdge
 
@@ -150,9 +150,9 @@ class GraphEngine:
         self._graph.add_edge(edge)
         self._edge_by_pair[(src_eid, tgt_eid)] = edge
 
-        # 实体间连接（双向）
+        # 实体间连接（单向：connected_nodes 配置决定拓扑方向）
+        # 双向连接由两端各自在 connected_nodes 中配对方实现
         self._entities[src_eid].connect_to(tgt_eid)
-        self._entities[tgt_eid].connect_to(src_eid)
 
         logger.debug(f"[Graph] 连接: {src_eid} ──▸ {tgt_eid} (qty={qty})")
         return edge
@@ -693,44 +693,20 @@ class GraphEngine:
         eid_to_label: dict[str, str] = {}
 
         if global_label_map is not None:
-            # 使用全局标签映射（由调用方构建，全图一致）
-            reverse = {v: k for k, v in global_label_map.items()}
+            # 使用全局标签映射（entity_id → entity_id 恒等映射）
             for eid in eid_list:
-                label = reverse.get(eid)
+                label = global_label_map.get(eid)
                 if label:
                     label_to_eid[label] = eid
                     eid_to_label[eid] = label
         else:
-            # 旧行为：为每个调用单独分配标签
-            from ..config.config_loader import get_all_label_mappings
-            config_labels = get_all_label_mappings()  # {name → label}
-
-            used_labels: set[str] = set()
+            # 默认：直接用 entity_id 做标签（无需中间映射）
             for eid in eid_list:
-                ent = self._entities.get(eid)
-                name = ent.name if ent else ""
-                label = config_labels.get(name) if name else None
-                if label and label not in used_labels:
-                    label_to_eid[label] = eid
-                    eid_to_label[eid] = label
-                    used_labels.add(label)
-
-            # 未配置映射的实体动态分配新标签
-            for eid in eid_list:
-                if eid in eid_to_label:
-                    continue
-                i = 0
-                while True:
-                    label = chr(65 + i)
-                    if label not in used_labels:
-                        label_to_eid[label] = eid
-                        eid_to_label[eid] = label
-                        used_labels.add(label)
-                        break
-                    i += 1
+                label_to_eid[eid] = eid
+                eid_to_label[eid] = eid
 
         lines = []
-        # 连接描述
+        # 连接描述（检查 connected_entity_ids 判断方向）
         conns = []
         for eid in eid_list:
             ent = self._entities.get(eid)
@@ -740,14 +716,19 @@ class GraphEngine:
             for conn_eid in ent.connected_entity_ids:
                 if conn_eid in eid_to_label:
                     dst_label = eid_to_label[conn_eid]
+                    # 方向判断：src→tgt 存在，但 tgt→src 不一定
+                    is_bidi = conn_eid in self._entities and \
+                              eid in self._entities[conn_eid].connected_entity_ids
                     edge = self._edge_by_pair.get((eid, conn_eid))
                     qty = edge.quantity if edge else 0
                     if qty == -1:
-                        conns.append(f"  {{{src_label}}} → {{{dst_label}}}")
+                        conns.append(f"  {{{src_label}}} → {{{dst_label}}}  (∞)")
                     elif qty > 0:
                         conns.append(f"  {{{src_label}}} → {{{dst_label}}}  qty:{qty}")
-                    else:
+                    elif is_bidi:
                         conns.append(f"  {{{src_label}}} ↔ {{{dst_label}}}")
+                    else:
+                        conns.append(f"  {{{src_label}}} → {{{dst_label}}}")
 
         if conns:
             lines.append("连接：")
@@ -774,6 +755,36 @@ class GraphEngine:
         if tag_lines:
             lines.append("\n标签：")
             lines.extend(tag_lines)
+
+        # 抽象空间节点属性展示（recipe 配方等）
+        recipe_lines = []
+        for label, eid in sorted(label_to_eid.items()):
+            ent = self._entities.get(eid)
+            if not ent or ent.space != "abstract":
+                continue
+            a = ent.attributes
+            c = a.get("consumes", {})
+            p = a.get("produces", {})
+            parts = []
+            if c or p:
+                consumes_str = " + ".join(f"{n}×{q}" for n, q in sorted(c.items()))
+                produces_str = " + ".join(f"{n}×{q}" for n, q in sorted(p.items()))
+                parts.append(f"[{ent.name}]")
+                parts.append(f"  {consumes_str} → {produces_str}")
+            nz = a.get("need_zone", "")
+            if nz:
+                parts.append(f"  需求区域: {nz}")
+            nt = a.get("need_tool", "")
+            if nt:
+                parts.append(f"  需求工具: {nt}")
+            vc = a.get("vitality_cost", 0)
+            if vc:
+                parts.append(f"  精力消耗: {vc}")
+            if parts:
+                recipe_lines.extend(parts)
+        if recipe_lines:
+            lines.append("\n配方（抽象空间节点）：")
+            lines.extend(recipe_lines)
 
         return "\n".join(lines), label_to_eid
 
@@ -1005,19 +1016,9 @@ def build_label_mapping_text(
     所有 LLM prompt 的映射表由此一处生成，换映射格式只改这里。
     标签按 node_config.json 中 label_mappings.labels[] 的顺序排序。
     """
-    from ..config.config_loader import get_all_label_mappings
-    config_order = get_all_label_mappings()  # {name → label}
-
-    # 按 config 顺序排序，不在 config 中的按字母序
-    def sort_key(item):
-        label, eid = item
-        ent = graph_engine.get_entity(eid) if graph_engine else None
-        name = ent.name if ent else ""
-        order = list(config_order.keys()).index(name) if name in config_order else 999
-        return (order, label)
-
+    # 按 entity_id 字母序排序（entity_id 就是 label）
     lines = []
-    for label, eid in sorted(label_map.items(), key=sort_key):
+    for label, eid in sorted(label_map.items(), key=lambda x: x[0]):
         name = "?"
         if graph_engine:
             ent = graph_engine.get_entity(eid)
@@ -1027,7 +1028,8 @@ def build_label_mapping_text(
             name = _extract_name_from_eid(eid)
 
         parts = [f"  {{{label}}} = {name}"]
-        parts.append(f"  → {eid}")
+        if label != eid:
+            parts.append(f"  → {eid}")
 
         if include_type and graph_engine:
             ent = graph_engine.get_entity(eid)

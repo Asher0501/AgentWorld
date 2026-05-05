@@ -95,6 +95,14 @@ class PipelineEngine:
         self._stages: dict[str, Any] = {}
         for s in adapter.get_pipeline_stages():
             self._stages[s.key] = s
+        # 读取 stage_settings（system prompt + temperature），域配置驱动，隔离拓扑-内容
+        self._stage_settings: dict[str, dict] = {}
+        try:
+            raw = adapter._adapter_data.get("stage_settings", {})
+            if isinstance(raw, dict):
+                self._stage_settings = raw
+        except Exception:
+            pass
 
     def get_timing(self) -> dict[str, float]:
         return dict(self._timing)
@@ -113,23 +121,33 @@ class PipelineEngine:
             logger.warning(f"[IO] 写入失败 ({base}): {e}")
 
     async def call_llm_async(self, prompt: str, stage_key: str, suffix: str = "") -> str:
-        """异步 LLM 调用 + IO 记录 + 计时（事件循环不阻塞）。"""
+        """异步 LLM 调用 + IO 记录 + 计时（事件循环不阻塞）。
+
+        按 stage_key 从 stage_settings 中读取 system prompt 和 temperature，
+        传递给 resolver。无配置项时使用 resolver 默认值。
+        """
         t0 = time.time()
         self._save_io(prompt, "<!-- waiting -->", stage_key, suffix)
-        raw = await asyncio.to_thread(self.resolver.call_llm, prompt)
+        settings = self._stage_settings.get(stage_key, {})
+        sp = settings.get("system") if isinstance(settings, dict) else None
+        temp = settings.get("temperature") if isinstance(settings, dict) else None
+        raw = await asyncio.to_thread(self.resolver.call_llm, prompt, sp, temp)
         elapsed = time.time() - t0
         self._timing[stage_key] = self._timing.get(stage_key, 0) + elapsed
         self._save_io(prompt, raw, stage_key, suffix)
         return raw
 
-    def parse_ops(self, stage_key: str, raw: str) -> list[GraphOp]:
-        """解析阶段 LLM 输出 → GraphOps。"""
+    def parse_ops(self, stage_key: str, raw: str, label_map: dict | None = None) -> list[GraphOp]:
+        """解析阶段 LLM 输出 → GraphOps。
+
+        对于需要标签解析的阶段（如 topo_structure），传入 label_map
+        以便将 LLM 输出的单字母标签 {A} 解析回实体 ID。
+        """
         stage = self._stages.get(stage_key)
         if not stage:
             logger.warning(f"[parse] 未知阶段: {stage_key}")
             return []
         if stage.output_type == StageOutputType.PLANS_MAP:
-            # LLM #1 风格的输出：不返回 GraphOp
             return []
         if stage.output_type == StageOutputType.NARRATIVES:
             return []
@@ -139,6 +157,10 @@ class PipelineEngine:
             return []
         if stage.output_type == StageOutputType.RAW_TEXT:
             return []
+        # topo_structure: 注入 label_map 解析单字母标签
+        if stage_key == "topo_structure" and label_map:
+            from ..domain.npc_world.adapter import _parse_topostruct_ops
+            return _parse_topostruct_ops(raw, label_map)
         return stage.parser(raw, self.graph_engine)
 
     def validate_ops(self, ops: list[GraphOp]) -> list[GraphOp]:
@@ -167,7 +189,7 @@ class PipelineEngine:
         t0 = time.time()
         prompt = self._build_prompt(stage, prompt_kwargs, label_map)
         raw = await self.call_llm_async(prompt, stage_key, suffix)
-        ops = self.parse_ops(stage_key, raw)
+        ops = self.parse_ops(stage_key, raw, label_map=label_map)
         validated = self.validate_ops(ops)
 
         if len(validated) < len(ops):

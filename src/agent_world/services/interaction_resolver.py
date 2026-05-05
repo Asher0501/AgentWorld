@@ -114,6 +114,10 @@ class InteractionResolver:
         self.model = model
         self.temperature = temperature
 
+    @staticmethod
+    def _default_system_prompt() -> str:
+        return "你只输出 JSON 格式数据，不要推理过程，不要多余文字。"
+
     # ─── Prompt 合并（供 engine.run_stage_plan_combined 使用）───
 
     def _build_combined_prompt(self, npc_prompts: list[tuple[str, str]]) -> str:
@@ -202,16 +206,16 @@ class InteractionResolver:
 
     # ─── API 调用 ───
 
-    def call_llm(self, prompt: str) -> str:
+    def call_llm(self, prompt: str, system_prompt: str | None = None, temperature: float | None = None) -> str:
         """公开的 LLM 调用入口，供外部层使用。"""
-        return self._call_llm(prompt)
+        return self._call_llm(prompt, system_prompt, temperature)
 
-    def _call_llm(self, prompt: str) -> str:
+    def _call_llm(self, prompt: str, system_prompt: str | None = None, temperature: float | None = None) -> str:
         if self.provider == "minimax":
-            return self._call_minimax(prompt)
-        return self._call_openai(prompt)
+            return self._call_minimax(prompt, system_prompt, temperature)
+        return self._call_openai(prompt, system_prompt, temperature)
 
-    def _call_minimax(self, prompt: str) -> str:
+    def _call_minimax(self, prompt: str, system_prompt: str | None = None, temperature: float | None = None) -> str:
         import httpx
 
         max_retries = 2
@@ -227,13 +231,15 @@ class InteractionResolver:
                     },
                     timeout=300.0,
                 ) as client:
+                    sp = system_prompt if system_prompt is not None else self._default_system_prompt()
+                    temp = temperature if temperature is not None else self.temperature
                     response = client.post(
                         "/v1/messages",
                         json={
                             "model": self.model,
                             "max_tokens": 8000,
-                            "temperature": self.temperature,
-                            "system": "你只输出 JSON 格式数据，不要推理过程，不要多余文字。",
+                            "temperature": temp,
+                            "system": sp,
                             "messages": [
                                 {"role": "user", "content": prompt},
                             ],
@@ -268,17 +274,17 @@ class InteractionResolver:
                 return ""
         return ""
 
-    def _call_openai(self, prompt: str) -> str:
+    def _call_openai(self, prompt: str, system_prompt: str | None = None, temperature: float | None = None) -> str:
         try:
             from openai import OpenAI
             client = OpenAI(api_key=self.api_key, base_url=self.base_url)
             response = client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是世界模拟引擎的交互推理模块。根据每个 NPC 的独立上下文输出 JSON。"},
+                    {"role": "system", "content": system_prompt if system_prompt is not None else self._default_system_prompt()},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=self.temperature,
+                temperature=temperature if temperature is not None else self.temperature,
                 max_tokens=4000,
             )
             text = response.choices[0].message.content or ""

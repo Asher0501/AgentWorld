@@ -3,6 +3,8 @@ Graph Adapter：将世界配置 → 纯拓扑节点
 
 不再创建任何接口（EntityInterface）。Node 只携带：
 - self description（type/role/attrs/traits/desc）
+- space（physical / abstract）
+- connected_nodes（拓扑连接，指向其他实体的 type:name 引用）
 """
 
 from __future__ import annotations
@@ -15,7 +17,30 @@ from ..config.config_loader import has_role
 
 logger = logging.getLogger(__name__)
 
-# ─── NPC → Entity ───
+# ─── 类型:名称 → entity ID 解析 ───
+
+def resolve_ref(ref: str) -> str:
+    """
+    将配置中的 'type:name' 引用解析为 entity_id。
+
+    示例：
+      resolve_ref('npc:杰洛特')   → 'npc_97845b74'
+      resolve_ref('item:草药')     → 'item_e65c06d5'
+      resolve_ref('zone:白果园')   → 'zone_白果园'
+      resolve_ref('recipe:研磨魔药') → 'recipe_研磨魔药'
+    """
+    if ":" not in ref:
+        return ref  # 已是完整 entity_id
+    type_, name = ref.split(":", 1)
+    if type_ == "zone":
+        return _make_zone_eid(name)
+    elif type_ == "recipe":
+        return f"recipe_{name}"
+    else:
+        return _make_eid(type_, name)
+
+
+# ─── Entity 创建 ───
 
 def npc_to_entity(config: Any) -> Entity:
     if not config or not hasattr(config, "name"):
@@ -76,9 +101,27 @@ def zone_to_entity(config: Any) -> Entity:
     return ent
 
 
+def recipe_to_entity(config: dict) -> Entity:
+    """从 recipe 配置创建抽象空间实体。"""
+    eid = f"recipe_{config['name']}"
+    ent = Entity(entity_id=eid, name=config['name'])
+    ent.space = "abstract"
+    ent.role = "recipe"
+    ent.desc = config.get("description", "")
+    ent.attributes["consumes"] = config.get("inputs", {})
+    ent.attributes["produces"] = config.get("outputs", {})
+    ent.attributes["need_zone"] = config.get("zone", "")
+    ent.attributes["need_tool"] = config.get("tool", "")
+    ent.attributes["tool_interface"] = config.get("tool_interface", "")
+    ent.attributes["vitality_cost"] = config.get("vitality_cost", 0)
+    return ent
+
+
 # ─── 世界图构建（主入口）───
 
 def build_world_graph(npcs: list, objects: list, zones: list,
+                      items: list[dict] | None = None,
+                      recipes: list[dict] | None = None,
                       mgr=None) -> dict[str, Entity]:
     """
     从世界配置构建实体图（纯节点）。
@@ -95,7 +138,14 @@ def build_world_graph(npcs: list, objects: list, zones: list,
         if ent:
             entities[ent.entity_id] = ent
 
-    # 2. 创建对象（如果有 WorldObjectManager）
+    # 2. 创建物品
+    if items:
+        for cfg in items:
+            ent = item_to_entity(cfg["name"])
+            if ent:
+                entities[ent.entity_id] = ent
+
+    # 3. 创建对象（如果有 WorldObjectManager）
     if mgr:
         for obj in mgr.all():
             oid = f"obj_{obj.id[:8]}" if hasattr(obj, 'id') else obj.entity_id
@@ -106,85 +156,51 @@ def build_world_graph(npcs: list, objects: list, zones: list,
                 ent.attributes["state"] = "intact"
                 entities[oid] = ent
 
-    # 3. 创建区域
+    # 4. 创建区域
     for cfg in zones:
         ent = zone_to_entity(cfg)
         if ent:
             entities[ent.entity_id] = ent
 
+    # 5. 创建配方（抽象空间节点）
+    if recipes:
+        for cfg in recipes:
+            ent = recipe_to_entity(cfg)
+            if ent:
+                entities[ent.entity_id] = ent
+
     logger.info(f"[Adapter] 构建完毕: {len(entities)} 个实体")
     return entities
 
 
-def _build_zone_lookup(zones: list) -> dict[str, str]:
-    """
-    构建 {可解析名称: entity_eid} 映射。
-
-    zone_to_entity() 用 cfg.name（中文显示名）构造 eid 如 zone_狐狸与鹅酒馆，
-    但 NPC 初始区域的 zone_id 可能是 config_key（如 fox_and_goose）或中文名。
-    本映射将所有可解析名称指向同一个 entity eid。
-    """
-    lookup: dict[str, str] = {}
-    for cfg in zones:
-        # 兼容 dict 和 object 两种 zone 配置格式
-        name = cfg.get("name", "") if isinstance(cfg, dict) else getattr(cfg, "name", "")
-        zid = cfg.get("id", "") if isinstance(cfg, dict) else getattr(cfg, "id", "")
-        if not name:
-            continue
-        eid = _make_zone_eid(name)
-        lookup[name] = eid       # 中文名 → zone EID
-        if zid and zid != name:
-            lookup[zid] = eid    # "fox_and_goose" → zone EID
-    return lookup
-
-
-def _resolve_zone_eid(ge, raw: str, zone_lookup: dict[str, str]) -> str | None:
-    """多策略解析 zone entity ID
-
-    策略顺序：
-    1. zone_lookup[raw] — config ID / display name 查映射表
-    2. ge.get_entity(raw) — 直接 eid 匹配（如 zone_狐狸与鹅酒馆）
-    3. ge.get_entity(f'zone_{raw}') — 构造 zone_前缀
-    4. ge.find_entity_by_name(raw) — 按 display name 查找
-    """
-    # 1. config key / display name lookup
-    if raw in zone_lookup:
-        return zone_lookup[raw]
-    # 2. 已是完整 eid
-    if ge.get_entity(raw):
-        return raw
-    # 3. 尝试 zone_ 前缀
-    constructed = _make_zone_eid(raw)
-    if ge.get_entity(constructed):
-        return constructed
-    # 4. 按 display name 查找
-    match = ge.find_entity_by_name(raw)
-    if match:
-        return match.entity_id
-    return None
-
+# ─── 图连接 ───
 
 def init_graph_edges_from_adapter(ge, npcs: list, zones: list):
     """
-    在 GraphEngine 上创建所有初始边。
+    在 GraphEngine 上创建所有初始边（向后兼容版）。
+
+    本函数保持旧签名不变，处理以下连接：
+      1. NPC → 初始区域（从 zone 字段）
+      2. NPC → 初始库存（从 inventory 字段）
+      3. 区域 → 相邻区域（从 Zone 模型的 connected_zones）
 
     参数：
         ge: GraphEngine 实例（已注册所有实体）
-        npcs: NPC 配置列表
-        zones: 区域配置列表（Zone 模型对象，含 .id 和 .name）
+        npcs: NPC 配置/模型列表
+        zones: Zone 模型对象列表
     """
     zone_lookup = _build_zone_lookup(zones)
 
-    # 从 domain.json 读取 NPC 初始区域（作为 DB 位置缺失时的后备）
+    # NPC → 区域 + NPC → 物品（初始库存）
     for cfg in npcs:
         npc_eid = _make_eid("npc", cfg.name)
 
-        # NPC → 区域（位置）
+        # NPC → 区域
         zone_key = _get_zone_for(cfg)
         if zone_key:
             zone_eid = _resolve_zone_eid(ge, zone_key, zone_lookup)
             if zone_eid:
-                ge.connect(npc_eid, zone_eid, -1)
+                ge.connect(npc_eid, zone_eid)
 
         # NPC → 物品（初始库存）
         raw_inv = _normalize_inventory(cfg)
@@ -192,7 +208,8 @@ def init_graph_edges_from_adapter(ge, npcs: list, zones: list):
             item_eid = _make_eid("item", item_name)
             if not ge.get_entity(item_eid):
                 ge.register_entity(item_to_entity(item_name, qty))
-            ge.connect(npc_eid, item_eid, qty)
+            ge.connect(npc_eid, item_eid)
+            ge.set_edge_quantity(npc_eid, item_eid, qty)
 
     # 区域双向连接
     for cfg in zones:
@@ -202,10 +219,115 @@ def init_graph_edges_from_adapter(ge, npcs: list, zones: list):
             neighbor_eid = _resolve_zone_eid(ge, neighbor_name, zone_lookup)
             if zone_eid and neighbor_eid:
                 if not ge.get_edge(zone_eid, neighbor_eid):
-                    ge.connect(zone_eid, neighbor_eid, 0)
-                    ge.connect(neighbor_eid, zone_eid, 0)
+                    ge.connect(zone_eid, neighbor_eid)
+                    ge.connect(neighbor_eid, zone_eid)
 
     logger.info(f"[Adapter] 初始边创建完毕 ({len(npcs)} NPC, {len(zones)} 区域)")
+
+
+def process_config_edges(
+    ge,
+    npc_config_dicts: list[dict] | None = None,
+    item_config_dicts: list[dict] | None = None,
+    zone_config_dicts: list[dict] | None = None,
+    recipe_config_dicts: list[dict] | None = None,
+):
+    """
+    从配置的 connected_nodes 补充图边。
+
+    - NPC config: NPC→zone, NPC→recipe, NPC→item（出边配置全部已包含）
+    - Zone config: zone→NPC, zone→item（补全反向连接，zone→item 设 qty=-1）
+    - Recipe config: recipe→抽象空间内部（如有）
+
+    连接方向规则：connected_nodes 中的每条记录是 src→tgt 单向。
+    双向连接由两端各自配置实现。
+    """
+    # === NPC 出边 ===
+    if npc_config_dicts:
+        for cfg in npc_config_dicts:
+            name = cfg.get("name", "")
+            if not name:
+                continue
+            src_id = _make_eid("npc", name)
+            if not ge.get_entity(src_id):
+                logger.warning(f"[ConfigEdges] NPC 实体不存在: {name} ({src_id})")
+                continue
+            for tgt_ref in cfg.get("connected_nodes", []):
+                tgt_id = resolve_ref(tgt_ref)
+                if not ge.get_entity(tgt_id):
+                    logger.warning(f"[ConfigEdges] 目标不存在: {tgt_ref} ({tgt_id})")
+                    continue
+                # 跳过已连接的（初始库存/区域已建边）
+                # 用 connected_entity_ids 检查方向性，而不是 get_edge（它做双向查找）
+                cache_src = ge.get_entity(src_id)
+                if cache_src and tgt_id not in cache_src.connected_entity_ids:
+                    ge.connect(src_id, tgt_id)
+
+    # === Zone 出边 ===
+    if zone_config_dicts:
+        for cfg in zone_config_dicts:
+            # domain.json 的 id 是英文 key（如 white_orchard），
+            # entity ID 使用中文名称（如 zone_白果园），需用 name 解析
+            src_id = resolve_ref(f"zone:{cfg.get('name', '')}")
+            cache_ent = ge.get_entity(src_id)
+            if not cache_ent:
+                continue
+            for tgt_ref in cfg.get("connected_nodes", []):
+                tgt_id = resolve_ref(tgt_ref)
+                if not ge.get_entity(tgt_id):
+                    continue
+                if tgt_id not in cache_ent.connected_entity_ids:
+                    ge.connect(src_id, tgt_id)
+                # zone→item 无限产出
+                if tgt_ref.startswith("item:"):
+                    ge.set_edge_quantity(src_id, tgt_id, -1)
+
+    # === Recipe 出边 ===
+    if recipe_config_dicts:
+        for cfg in recipe_config_dicts:
+            src_id = resolve_ref(f"recipe:{cfg['name']}")
+            cache_src = ge.get_entity(src_id)
+            if not cache_src:
+                continue
+            for tgt_ref in cfg.get("connected_nodes", []):
+                tgt_id = resolve_ref(tgt_ref)
+                if not ge.get_entity(tgt_id):
+                    continue
+                if tgt_id not in cache_src.connected_entity_ids:
+                    ge.connect(src_id, tgt_id)
+
+    # === Item 出边 ===
+    if item_config_dicts:
+        for cfg in item_config_dicts:
+            name = cfg.get("name", "")
+            if not name:
+                continue
+            src_id = _make_eid("item", name)
+            cache_src = ge.get_entity(src_id)
+            if not cache_src:
+                continue
+            for tgt_ref in cfg.get("connected_nodes", []):
+                tgt_id = resolve_ref(tgt_ref)
+                if not ge.get_entity(tgt_id):
+                    continue
+                if tgt_id not in cache_src.connected_entity_ids:
+                    ge.connect(src_id, tgt_id)
+
+    # 设置 NPC→item 初始数量
+    if npc_config_dicts:
+        for cfg in npc_config_dicts:
+            name = cfg.get("name", "")
+            if not name:
+                continue
+            src_id = _make_eid("npc", name)
+            inv = cfg.get("inventory", {})
+            for item_name, qty in inv.items():
+                item_eid = _make_eid("item", item_name)
+                edge = ge.get_edge(src_id, item_eid)
+                if edge:
+                    ge.set_edge_quantity(src_id, item_eid, qty)
+
+    logger.info(f"[ConfigEdges] 配置边补充完毕")
 
 
 # ─── 辅助 ───
@@ -230,6 +352,42 @@ def _make_zone_eid(name: str, *, from_role: str = "region") -> str:
     from ..config.config_loader import get_prefix_by_role
     pfx = get_prefix_by_role(from_role) or "zone_"
     return f"{pfx}{name}"
+
+
+def _build_zone_lookup(zones: list) -> dict[str, str]:
+    """
+    构建 {可解析名称: entity_eid} 映射。
+
+    zone_to_entity() 用 cfg.name（中文显示名）构造 eid 如 zone_狐狸与鹅酒馆，
+    但 NPC 初始区域的 zone_id 可能是 config_key（如 fox_and_goose）或中文名。
+    本映射将所有可解析名称指向同一个 entity eid。
+    """
+    lookup: dict[str, str] = {}
+    for cfg in zones:
+        name = cfg.get("name", "") if isinstance(cfg, dict) else getattr(cfg, "name", "")
+        zid = cfg.get("id", "") if isinstance(cfg, dict) else getattr(cfg, "id", "")
+        if not name:
+            continue
+        eid = _make_zone_eid(name)
+        lookup[name] = eid
+        if zid and zid != name:
+            lookup[zid] = eid
+    return lookup
+
+
+def _resolve_zone_eid(ge, raw: str, zone_lookup: dict[str, str]) -> str | None:
+    """多策略解析 zone entity ID"""
+    if raw in zone_lookup:
+        return zone_lookup[raw]
+    if ge.get_entity(raw):
+        return raw
+    constructed = _make_zone_eid(raw)
+    if ge.get_entity(constructed):
+        return constructed
+    match = ge.find_entity_by_name(raw)
+    if match:
+        return match.entity_id
+    return None
 
 
 def _get_zone_for(cfg) -> str:

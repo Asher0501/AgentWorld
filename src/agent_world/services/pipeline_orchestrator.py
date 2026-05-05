@@ -216,7 +216,7 @@ class PipelineOrchestrator:
             return
 
         raw_plans = await asyncio.wait_for(
-            self._engine.run_stage_plan_combined(npc_prompts, "plans"),
+            self._engine.run_stage_plan_combined(npc_prompts, "plan"),
             timeout=PLAN_TIMEOUT,
         )
 
@@ -242,13 +242,16 @@ class PipelineOrchestrator:
 
     async def _stage_topo_structure(self, ctx: PipelineContext):
         self.adapter.set_graph_engine(self.graph_engine)
+        global_label_map = self.adapter.build_global_label_map(self.graph_engine)
         kw = dict(
             npc_plans=ctx.plan_map,
             graph_engine=self.graph_engine,
             world_time_str=ctx.world_time_str,
             tick_duration_str=ctx.tick_duration_str,
+            global_label_map=global_label_map,
+            count=len(ctx.plan_map),
         )
-        result = await self._engine.run_stage("topo_structure", kw)
+        result = await self._engine.run_stage("topo_structure", kw, label_map=global_label_map)
         ctx.topo_structure_ops = result.ops
         logger.info(f"[LLM #2] {len(ctx.topo_structure_ops)} 个拓扑结构操作")
 
@@ -504,7 +507,7 @@ class PipelineOrchestrator:
                 logger.warning(f"[Engine]   增量错误: {err}")
 
         if ctx.recent_info_map:
-            from ..config.node_ontology import has_recent_info
+            from ..config.config_loader import has_recent_info
             import json as _json
             w = 0
             for eid, txt in ctx.recent_info_map.items():
