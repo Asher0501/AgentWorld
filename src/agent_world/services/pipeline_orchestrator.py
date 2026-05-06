@@ -49,7 +49,7 @@ class PipelineContext:
         # ——— 连通分量分割（新增） ———
         self.components: list[TopoComponent] = []
 
-        # ——— LLM #4a / #4b 输出 ———
+        # ——— LLM #4a / #5 输出 ———
         self.topo_delta_ops: list[GraphOp] = []
         self.attr_ops: list[StateChange] = []
         self.recent_info_map: dict[str, str] = {}
@@ -114,7 +114,7 @@ class PipelineOrchestrator:
     ) -> list[dict]:
         """
         执行完整管线 tick（LLM #1 → #2 → IntentExecutor → 分量分割 →
-            每分量: #3 → #4a → #4b → #5 → 归并 → 执行）。
+            每分量: #3 → #4a → #5 → 归并 → 执行）。
 
         Args:
             npcs: DB NPC 模型列表
@@ -146,7 +146,7 @@ class PipelineOrchestrator:
         # Step 4: 连通分量分割（新增）
         ctx.components = self._split_components(ctx)
 
-        # Step 5: 全分量 LLM #3 → #4a → #4b → #5（并行）
+        # Step 5: 全分量 LLM #3 → #4a → #5（并行）
         tasks = [self._run_one_component(ctx, comp) for comp in ctx.components]
         await asyncio.gather(*tasks)
 
@@ -410,9 +410,10 @@ class PipelineOrchestrator:
 
     async def _run_one_component(self, ctx: PipelineContext, comp: TopoComponent):
         """
-        执行单个连通分量的完整 #3 → #4a → #4b → #5 管线。
-        失败时自动 retry，仅限于本分量内部。
+        执行单个连通分量的完整管线：#3 → #4(拓扑执行) → 落地 → #5(状态投影)。
+        两阶段各自独立校验/重试，互不影响。
         """
+        from .verification_layer import _TOPOLOGY_CHECK_MASK, _PROJECTION_CHECK_MASK
         max_retries = get_verification_config("max_retries", 1)
 
         # LLM #3 for this component（异步）
@@ -421,8 +422,10 @@ class PipelineOrchestrator:
         # 筛选本分量的 npc_plans
         comp_plans = {eid: ctx.plan_map[eid] for eid in comp.npc_eids if eid in ctx.plan_map}
 
+        # ═══════════════════════════════════════════
+        # Phase 1: LLM #4 — 拓扑执行
+        # ═══════════════════════════════════════════
         for attempt in range(max_retries + 1):
-            # LLM #4a — 拓扑操作（异步）
             comp.topo_ops = await self._pp.resolve_topology_changes_async(
                 npc_plans=comp_plans,
                 stories=comp.stories,
@@ -432,65 +435,129 @@ class PipelineOrchestrator:
                 topo_pool=comp.eids,
                 label_map=comp.label_map,
             )
-            logger.info(f"[分量 {comp.id}] LLM #4a: {len(comp.topo_ops)} 个拓扑操作")
+            logger.info(f"[分量 {comp.id}] LLM #4: {len(comp.topo_ops)} 个拓扑操作")
 
-            # LLM #4b — 属性 + 近况（异步）
-            comp.attr_ops, comp.recent_info = await self._pp.resolve_attr_and_recent_async(
-                npc_plans=comp_plans,
-                stories=comp.stories,
-                graph_engine=self.graph_engine,
-                world_time_str=ctx.world_time_str,
-                tick_duration_str=ctx.tick_duration_str,
-            )
-            logger.info(f"[分量 {comp.id}] LLM #4b: {len(comp.attr_ops)} attr, "
-                         f"{len(comp.recent_info)} ri")
-
-            # LLM #5 — 校验
+            # 只校验拓扑操作（entity_existence / capacity_upper_bound / degree_conservation）
             comp.failures = self._vl.check_all(
-                comp.stories, comp.topo_ops, comp.attr_ops, comp.recent_info,
+                comp.stories, comp.topo_ops, [], {},
+                mask=_TOPOLOGY_CHECK_MASK,
             )
 
             if not comp.failures:
-                logger.info(f"[分量 {comp.id}] LLM #5 校验通过 (attempt {attempt + 1})")
+                logger.info(f"[分量 {comp.id}] #4 拓扑校验通过 (attempt {attempt + 1})")
                 break
 
             if attempt >= max_retries:
                 logger.warning(f"[分量 {comp.id}] 已达最大重试次数 ({max_retries})")
                 break
 
-            # 构造 feedback，只包含本分量的失败项
             first_topo = getattr(self._pp, "_last_raw_topo_response", "")
-            first_attr = getattr(self._pp, "_last_raw_attr_response", "")
             feedback = self._vl.build_feedback(
                 comp.failures,
                 previous_topo_output=first_topo,
-                previous_attr_output=first_attr,
             )
-            logger.warning(f"[分量 {comp.id}] 校验失败 ({len(comp.failures)} 项)，"
+            logger.warning(f"[分量 {comp.id}] 拓扑校验失败 ({len(comp.failures)} 项)，"
                            f"重试 #{attempt + 2}")
 
-        # 降级（按分量）
+        # 降级(conserve) + 立即落地拓扑
         if comp.topo_ops:
             filtered = self.adapter.validate_ops(comp.topo_ops, self.graph_engine)
             removed = len(comp.topo_ops) - len(filtered)
             if removed:
                 logger.warning(f"[分量 {comp.id}] 降级移除 {removed}/{len(comp.topo_ops)} 操作")
             comp.topo_ops = filtered
+            r = self.graph_engine.apply_edge_operations(comp.topo_ops)
+            logger.info(f"[分量 {comp.id}] 拓扑落地: {r['status']}")
+            for err in (r.get("errors") or []):
+                logger.warning(f"[分量 {comp.id}]   落地错误: {err}")
+
+        # 生成 topo_diff — 落地拓扑的变化摘要
+        comp.topo_diff = self._make_topo_diff(comp.topo_ops)
+
+        # ═══════════════════════════════════════════
+        # Phase 2: LLM #5 — 状态投影 (attr + recent_info)
+        # ═══════════════════════════════════════════
+        for attempt in range(max_retries + 1):
+            comp.attr_ops, comp.recent_info = await self._pp.resolve_projections_async(
+                npc_plans=comp_plans,
+                stories=comp.stories,
+                graph_engine=self.graph_engine,
+                topo_diff=comp.topo_diff,
+                world_time_str=ctx.world_time_str,
+                tick_duration_str=ctx.tick_duration_str,
+            )
+            logger.info(f"[分量 {comp.id}] LLM #5: {len(comp.attr_ops)} attr, "
+                         f"{len(comp.recent_info)} ri")
+
+            # 只校验 attr + recent_info（skip degree_conservation）
+            comp.failures = self._vl.check_all(
+                comp.stories, [], comp.attr_ops, comp.recent_info,
+                mask=_PROJECTION_CHECK_MASK,
+            )
+
+            if not comp.failures:
+                logger.info(f"[分量 {comp.id}] #5 投影校验通过 (attempt {attempt + 1})")
+                break
+
+            if attempt >= max_retries:
+                logger.warning(f"[分量 {comp.id}] 已达最大重试次数 ({max_retries})")
+                break
+
+            first_attr = getattr(self._pp, "_last_raw_attr_response", "")
+            feedback = self._vl.build_feedback(
+                comp.failures,
+                previous_attr_output=first_attr,
+            )
+            logger.warning(f"[分量 {comp.id}] 投影校验失败 ({len(comp.failures)} 项)，"
+                           f"重试 #{attempt + 2}")
+
 
     # ═══════════════════════════════════════════
     # Step 5.5: 归并分量
     # ═══════════════════════════════════════════
 
+    @staticmethod
+    def _make_topo_diff(topo_ops: list[dict]) -> str:
+        """从已落地的拓扑操作生成人类可读的变化摘要。"""
+        if not topo_ops:
+            return ""
+        lines = []
+        for op in topo_ops:
+            op_type = op.get("op", "")
+            if op_type == "delta":
+                src = op.get("src", "?")
+                tgt = op.get("tgt", "?")
+                d = op.get("delta", 0)
+                lines.append(f"  {src} → {tgt}: {d:+d}")
+            elif op_type == "recipe":
+                src = op.get("src", "?")
+                cons = op.get("consumes", {})
+                prod = op.get("produces", {})
+                parts = [f"{k}x{v}" for k, v in cons.items()]
+                parts += [f"{k}x{v}" for k, v in prod.items()]
+                lines.append(f"  {src} recipe: {' + '.join(parts)}")
+            elif op_type == "system_delta":
+                tgt = op.get("tgt", "?")
+                item = op.get("item", "?")
+                d = op.get("delta", 0)
+                lines.append(f"  {tgt} {item}: {d:+d} (system)")
+            elif op_type == "set_qty":
+                src = op.get("src", "?")
+                tgt = op.get("tgt", "?")
+                q = op.get("qty", 0)
+                lines.append(f"  {src} → {tgt}: set qty={q}")
+        if not lines:
+            return ""
+        return "\n".join(lines)
+
     def _merge_commit_components(self, ctx: PipelineContext):
         """归并所有分量结果到全局 context 并执行。"""
         for comp in ctx.components:
-            ctx.topo_delta_ops.extend(comp.topo_ops or [])
             ctx.attr_ops.extend(comp.attr_ops or [])
             ctx.recent_info_map.update(comp.recent_info or {})
             ctx.stories.extend(comp.stories or [])
 
         logger.info(f"[归并] {len(ctx.components)} 个分量合并: "
-                     f"{len(ctx.topo_delta_ops)} topo ops, "
                      f"{len(ctx.attr_ops)} attr ops, "
                      f"{len(ctx.recent_info_map)} ri entries")
 
@@ -501,12 +568,6 @@ class PipelineOrchestrator:
     # ═══════════════════════════════════════════
 
     def _apply_final_ops(self, ctx: PipelineContext):
-        if ctx.topo_delta_ops:
-            r = self.graph_engine.apply_edge_operations(ctx.topo_delta_ops)
-            logger.info(f"[Engine] #4a 拓扑执行: {r['status']}")
-            for err in (r.get("errors") or []):
-                logger.warning(f"[Engine]   增量错误: {err}")
-
         if ctx.recent_info_map:
             from ..config.config_loader import has_recent_info
             import json as _json
@@ -531,7 +592,7 @@ class PipelineOrchestrator:
 
         if ctx.attr_ops:
             r = self.graph_engine.apply_edge_operations(ctx.attr_ops)
-            logger.info(f"[Engine] #4b attr 执行: {r['status']} ({len(r['results'])} 条)")
+            logger.info(f"[Engine] #5 attr 执行: {r['status']} ({len(r['results'])} 条)")
             for err in (r.get("errors") or []):
                 logger.warning(f"[Engine]   增量错误: {err}")
 

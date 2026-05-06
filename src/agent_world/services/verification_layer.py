@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 #        3=entity_coverage, 4=direction_pairing, 5=story_consistency
 from .verification_registry import load_layer_mask as _load_layer_mask
 _PREWRITE_CHECK_MASK: list[bool] = _load_layer_mask("prewrite_layer_mask")
+_TOPOLOGY_CHECK_MASK: list[bool] = _load_layer_mask("topology_layer_mask")
+_PROJECTION_CHECK_MASK: list[bool] = _load_layer_mask("projection_layer_mask")
 
 
 class VerificationLayer:
@@ -96,18 +98,24 @@ class VerificationLayer:
         topo_ops: list[dict],
         attr_ops: list[dict],
         recent_info_map: dict[str, str],
+        mask: list[bool] | None = None,
     ) -> list[CheckFailure]:
         """
         根据 mask 运行所有已激活的校验项。
 
+        Args:
+            mask: 可选校验 mask，None 时使用预写校验默认 mask
+                  (prewrite_layer_mask)
+
         Returns:
             CheckFailure[] — 空列表表示全部通过
         """
+        effective_mask = mask if mask is not None else _PREWRITE_CHECK_MASK
         ctx = self._build_context(stories, topo_ops, attr_ops, recent_info_map)
-        failures = run_checks(_PREWRITE_CHECK_MASK, ctx)
+        failures = run_checks(effective_mask, ctx)
 
         for f in failures:
-            logger.warning("[预写校验] FAIL: %s", f.to_text())
+            logger.warning("[校验] FAIL: %s", f.to_text())
 
         return failures
 
@@ -122,7 +130,7 @@ class VerificationLayer:
             failures: 校验失败列表
             previous_topo_output: LLM #4a 上一轮原始输出（含完整 JSON），
                                   供 LLM 精确定位失败操作并只修改相关字段
-            previous_attr_output: LLM #4b 上一轮原始输出
+            previous_attr_output: LLM #5 上一轮原始输出
 
         设计原则：每个错误码附带拓扑描述 + 具体原因，LLM 通过查错误码表理解问题。
         """
@@ -157,7 +165,7 @@ class VerificationLayer:
             lines.append("")
 
         if previous_attr_output:
-            lines.append("===== 你上一轮的内容输出（#4b） =====")
+            lines.append("===== 你上一轮的内容输出（#5） =====")
             truncated = previous_attr_output[:2000]
             lines.append(truncated)
             if len(previous_attr_output) > 2000:

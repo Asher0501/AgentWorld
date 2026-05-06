@@ -313,19 +313,9 @@ def process_config_edges(
                 if tgt_id not in cache_src.connected_entity_ids:
                     ge.connect(src_id, tgt_id)
 
-    # 设置 NPC→item 初始数量
-    if npc_config_dicts:
-        for cfg in npc_config_dicts:
-            name = cfg.get("name", "")
-            if not name:
-                continue
-            src_id = _make_eid("npc", name)
-            inv = cfg.get("inventory", {})
-            for item_name, qty in inv.items():
-                item_eid = _make_eid("item", item_name)
-                edge = ge.get_edge(src_id, item_eid)
-                if edge:
-                    ge.set_edge_quantity(src_id, item_eid, qty)
+    # 注：NPC→item 数量不从 config 默认值设置，
+    # 由之前的 init_graph_edges_from_adapter(ge, db_npcs, ...) 从 DB 持久化值设置。
+    # 此处再覆盖会重置掉上 tick 的 LLM #4a delta 效果。
 
     logger.info(f"[ConfigEdges] 配置边补充完毕")
 

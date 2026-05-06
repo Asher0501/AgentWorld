@@ -23,6 +23,24 @@
       false,
       true
     ],
+    "topology_layer_mask": [
+      true,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true
+    ],
+    "projection_layer_mask": [
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false
+    ],
     "check_names": [
       "entity_existence",
       "quantity_accuracy",
@@ -234,12 +252,13 @@
     "inventory": "### 当前持有\n{items}\n\n",
     "inventory_empty": "### 当前持有\n空手\n\n",
     "zone_others": "### 当前区域还有\n{others}\n\n",
+    "zone_connections": "### 可通过区域\n{connections}\n\n",
     "decision_guidance": "### 决策\n请为 {name} 决定下一步行动。\n用自然语言描述：你想做什么？在哪里做？有什么影响？为什么？\n不用输出 JSON，不用关心格式，直接说你想干嘛。\n\n格式示例：我叫{name}，我是{role}。我目前在{zone}，持有金币x8、魔药x2。\n我决定去炼金小屋找特莉丝买点魔药，顺便打听附近的水鬼巢穴。\n用第一人称说人话就行。\n",
     "system_role": {
       "llm2": "你是一个世界模拟引擎的拓扑结构变更模块（LLM #2）。\n你的任务：根据每个角色（NPC）的自然语言计划，输出拓扑结构变更操作。\n\n",
       "llm3": "你是世界模拟引擎的故事叙事层。\n你的任务：为以下场景写一段生动的故事。\n用【场景】开头，用小说般的语言描写。不要输出任何结构化的格式。\n\n",
       "llm4a": "你是一个世界模拟引擎的**拓扑变化推理模块**（LLM #4a）。\n\n你的任务：根据角色们的计划、故事叙事以及当前拓扑状态，\n推理出本次 tick 的**图结构变化**（边的数量增删）。\n\n",
-      "llm4b": "你是一个世界模拟引擎的**内容变化推理模块**（LLM #4b）。\n\n你的任务：根据角色们的计划、故事叙事以及已执行的拓扑变更，\n推理出本次 tick 的**属性变化和近况摘要**。\n\n"
+      "llm5": "你是一个世界模拟引擎的**内容变化推理模块**（LLM #5）。\n\n你的任务：根据角色们的计划、故事叙事以及已执行的拓扑变更，\n推理出本次 tick 的**属性变化和近况摘要**。\n\n"
     },
     "combined_header": "每个角色（NPC）的 prompt 分为 [拓扑]（纯结构，无名称）和 [内容]（语义信息+标签映射）两段。\n输出时使用 [内容] 段的 entity_id。\n\n共 {count} 个角色。\n",
     "output_instructions": {
@@ -264,7 +283,7 @@
     "guidance_syntax": "==== [拓扑] 引导 ====\n支持的操作类型（可以同时出现，不是互斥）：\n· recipe：配方转换（消耗一组物品生产另一组）\n  {\"op\": \"recipe\", \"src\": \"{npc_hatori}\", \"consumes\": {\"{item_ore}\": 3}, \"produces\": {\"{item_weapon}\": 1}}\n  ——守恒校验跳过（配方内部自平衡）\n· system_delta：系统间物品转移\n  {\"op\": \"system_delta\", \"tgt\": \"{npc_geralt}\", \"item\": \"{item_coin}\", \"delta\": -1}\n  ——守恒校验跳过\n· delta：修改边的数量（必须成对，Σ=0）\n  {\"op\": \"delta\", \"src\": \"{npc_geralt}\", \"tgt\": \"{item_coin}\", \"delta\": -2}\n  src/tgt/item 中的节点引用必须使用标签 {entity_id}，系统自动替换为实体 ID\n· set_qty：设置边的数量\n  {\"op\": \"set_qty\", \"src\": \"{npc_geralt}\", \"tgt\": \"{item_herb}\", \"qty\": 2}\n· connect/disconnect 格式由 LLM #2 处理 — LLM #4a 不输出拓扑变更。\n\n**累计流出约束**: 同一 NPC 对同一物品输出多条 delta 时，\n这些 delta 的绝对值之和不能超过边的当前数量。\n例如特莉丝→金币 qty=8，不能同时输出 -5 和 -4。\n若有需要，请合并为单条 delta（如 -8），\n或确保总和不超余额后拆分输出。\n\n**分组度守恒约束**: 对带 [conserved] 标签的节点（如金币），\n同一 group 内所有涉及其的 delta 代数和必须为零。\n\n示例：herb_trade 组中：\n  {npc_geralt}→{item_coin} +15\n  {npc_tomira}→{item_coin} -8\n  {npc_dandelion}→{item_coin} +10\n  {npc_tomira}→{item_coin} -8\n  sum = +9  ❌ 违反度守恒\n\n正确做法：npc_tomira 只有 8 金币，总支出 -8，\n则 npc_geralt 和 npc_dandelion 的总收入也必须等于 8：\n  {npc_tomira}→{item_coin} -8\n  {npc_geralt}→{item_coin} +4\n  {npc_dandelion}→{item_coin} +4\n  sum = 0  ✅\n\n即：付出方叠加余额上限裁剪后，接收方总额必须等量缩减。\n\n\n**标签使用约束**: src/tgt/item 必须使用有内容的标签 {entity_id}（如 {npc_geralt}、{item_coin}）。\n禁止使用 {}（空括号）作为标签值。字符串 \"{}\" 在 JSON 中会被解析\n为反斜杠转义值，破坏操作的结构完整性。\n如果需要系统来源/目标（非 NPC 实体），请使用 system_delta 操作。\n",
     "output_format": {
       "llm4a": "==== 输出格式 ====\n输出 JSON 对象，包含两个字段：\n1. thinking（可选）：你的推理和分析过程。用来容纳分析思考。\n2. operations（必填）：拓扑操作列表。\n\n只输出 JSON，不要多余文字，不要 markdown 代码块。\n\n{ \"thinking\": \"你的分析...\", \"operations\": [...] }\n\n示例（delta + system_delta 共存）：\n{\"thinking\": \"tavern_trade 组需要金币从买家流向卖家…\",\n  \"operations\": [\n  {\"op\": \"delta\", \"src\": \"{npc_geralt}\", \"tgt\": \"{item_coin}\", \"delta\": -2},\n  {\"op\": \"delta\", \"src\": \"{npc_tomira}\", \"tgt\": \"{item_coin}\", \"delta\": 2},\n  {\"op\": \"delta\", \"src\": \"{npc_tomira}\", \"tgt\": \"{item_herb}\", \"delta\": -1},\n  {\"op\": \"delta\", \"src\": \"{npc_geralt}\", \"tgt\": \"{item_herb}\", \"delta\": 1},\n  {\"op\": \"system_delta\", \"tgt\": \"{npc_geralt}\", \"item\": \"{item_coin}\", \"delta\": -1}\n]}\n\n示例（recipe 单独）：\n{\"thinking\": \"哈托里准备用矿石打一把武器…\",\n  \"operations\": [\n  {\"op\": \"recipe\", \"src\": \"{npc_hatori}\", \"consumes\": {\"{item_ore}\": 3}, \"produces\": {\"{item_weapon}\": 1}}\n]}\n",
-      "llm4b": "==== [内容] 输出格式 ====\n根据故事中的活动输出 attr + recent_info：\n1. 诚实反映故事里的属性变化\n2. 只要 NPC 有活动，就输出 attr\n3. 不需要输出任何物品边操作\n4. 所有 attr 都必须在 recent_info 中有对应叙述\n\n属性常识：\n- 交易成功→心境+，交易失败→心境-\n- 活动消耗活力，休息恢复活力\n- 吃东西增加饱食\n\nrecent_info 写作：\n- NPC 用第一人称\n- zone 写「这里发生了什么」\n- 每条 20-60 字\n\n输出格式：\n{\n  \"operations\": [{\"op\": \"attr\", \"target\": \"实体名\", \"attr\": \"属性名\", \"delta\": N, \"description\": \"描述\"}],\n  \"recent_info\": {\"实体名\": \"近况摘要\"}\n}\n\n示例：\n{\n  \"operations\": [\n    {\"op\": \"attr\", \"target\": \"杰洛特\", \"attr\": \"vitality\", \"delta\": -8, \"description\": \"在市场寻找炼金材料\"},\n    {\"op\": \"attr\", \"target\": \"丹德里恩\", \"attr\": \"mood\", \"delta\": 5, \"description\": \"在酒馆唱歌赢得喝彩\"}\n  ],\n  \"recent_info\": {\n    \"杰洛特\": \"我在白果园广场转了一圈，打算去炼金小屋找特莉丝\",\n    \"丹德里恩\": \"在酒馆唱了一首叙事诗，听众赏了几个铜板\",\n    \"白果园广场\": \"广场上人来人往，告示栏前围了几个人\"\n  }\n}\n"
+      "llm5": "==== [内容] 输出格式 ====\n根据故事中的活动输出 attr + recent_info：\n1. 诚实反映故事里的属性变化\n2. 只要 NPC 有活动，就输出 attr\n3. 不需要输出任何物品边操作\n4. 所有 attr 都必须在 recent_info 中有对应叙述\n\n属性常识：\n- 交易成功→心境+，交易失败→心境-\n- 活动消耗活力，休息恢复活力\n- 吃东西增加饱食\n\nrecent_info 写作：\n- NPC 用第一人称\n- zone 写「这里发生了什么」\n- 每条 20-60 字\n\n输出格式：\n{\n  \"operations\": [{\"op\": \"attr\", \"target\": \"实体名\", \"attr\": \"属性名\", \"delta\": N, \"description\": \"描述\"}],\n  \"recent_info\": {\"实体名\": \"近况摘要\"}\n}\n\n示例：\n{\n  \"operations\": [\n    {\"op\": \"attr\", \"target\": \"杰洛特\", \"attr\": \"vitality\", \"delta\": -8, \"description\": \"在市场寻找炼金材料\"},\n    {\"op\": \"attr\", \"target\": \"丹德里恩\", \"attr\": \"mood\", \"delta\": 5, \"description\": \"在酒馆唱歌赢得喝彩\"}\n  ],\n  \"recent_info\": {\n    \"杰洛特\": \"我在白果园广场转了一圈，打算去炼金小屋找特莉丝\",\n    \"丹德里恩\": \"在酒馆唱了一首叙事诗，听众赏了几个铜板\",\n    \"白果园广场\": \"广场上人来人往，告示栏前围了几个人\"\n  }\n}\n"
     },
     "recent_info_guidance": "==== 节点近况投影 ====\n请根据本轮故事，为故事中涉及到的节点生成近况摘要。\n近况会成为该节点下个 tick 的上下文。\n\n规则：\n- 每条 20-60 字，简洁但有信息量\n- NPC 用第一人称（「我做了什么」），zone 写「这里发生了什么」\n- 没有事件可以不写\n- 不是 NPC 的节点也可以写（zone、item 等）\n\n",
     "attr_constraints": "==== [内容] 约束 ====\n□ attr 值域：vitality / satiety / mood 均在 0-100 范围内\n□ 每条 attr 必须有对应的 recent_info 条目\n□ recent_info 每条 20-60 字\n□ 至少输出 1 条 attr 操作\n\n",

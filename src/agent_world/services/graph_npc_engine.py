@@ -279,7 +279,7 @@ class GraphNPCEngine:
     def _decay_and_sync(self, npcs):
         """被动衰减 + 同步。
         
-        记忆写入已移除（由 LLM #4b recent_info 代替）。
+        记忆写入已移除（由 LLM #5 recent_info 代替）。
         仅保留属性衰减逻辑。
         """
         for npc in npcs:

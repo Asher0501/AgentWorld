@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
+import re as _re
 from typing import Any, Optional
 
 from ..adapter import (
@@ -45,7 +45,6 @@ def _parse_topostruct_ops(raw: str, label_map: dict[str, str]) -> list[GraphOp]:
             return tag_to_eid[stripped]
         return val
 
-    import re as _re
     raw = raw.strip()
     # 提取第一个 JSON 对象/数组
     m = _re.search(r'[\[{]', raw)
@@ -122,7 +121,7 @@ def _get_zone_name(entity, ge) -> str:
             e = ge.get_entity(conn)
             if e and _has_role(e.type_id, "region"):
                 return e.name
-    from ...config.node_ontology import prefix_to_type_id
+    from ...config.config_loader import prefix_to_type_id
     for conn in entity.connected_entity_ids:
         tid = prefix_to_type_id(conn)
         if tid and _has_role(tid, "region"):
@@ -232,9 +231,9 @@ class NPCWorldAdapter(DomainAdapter):
                 output_type=StageOutputType.GRAPH_OPS,
                 prompt_template="llm4a_topo",
                 parser=lambda raw, g: self.parse_llm_output(4, raw, None, g)),
-            PipelineStage(key="content_update", label="LLM #4b — Content Update",
+            PipelineStage(key="content_update", label="LLM #5 — Content Update",
                 output_type=StageOutputType.ATTR_UPDATE,
-                prompt_template="llm4b_content",
+                prompt_template="llm5_content",
                 parser=lambda raw, g: self.parse_llm_output(5, raw, None, g)),
         ]
 
@@ -247,6 +246,7 @@ class NPCWorldAdapter(DomainAdapter):
             ("recent_info",          "content"),
             ("inventory",            "content"),
             ("zone_others",          "content"),
+            ("zone_connections",     "content"),
             ("available_recipes",    "content"),
             ("entity_constraints",    "content"),
             ("label_mapping",        "topology"),
@@ -292,10 +292,25 @@ class NPCWorldAdapter(DomainAdapter):
             ("guidance_syntax",           "content"),
             ("output_format",             "content"),
         ],
-        "llm4b_content": [
+        "llm5_content": [
             ("feedback",             "runtime"),
             ("system_role",          "content"),
             ("time_info",            "runtime"),
+            ("npc_state_section",    "content"),
+            ("plans_section",        "content"),
+            ("stories_section",      "content"),
+            ("label_mapping",        "topology"),
+            ("topology_constraints_recent", "topology"),
+            ("recent_info_guidance", "content"),
+            ("attr_constraints",     "content"),
+            ("attr_knowledge",       "content"),
+            ("output_format",        "content"),
+        ],
+        "llm5_projection": [
+            ("feedback",             "runtime"),
+            ("system_role",          "content"),
+            ("time_info",            "runtime"),
+            ("topo_diff_section",    "content"),
             ("npc_state_section",    "content"),
             ("plans_section",        "content"),
             ("stories_section",      "content"),
@@ -572,6 +587,35 @@ class NPCWorldAdapter(DomainAdapter):
             return template.format(others=others)
         return ""
 
+    def slot_zone_connections(self, **kw) -> str:
+        """
+        渲染当前区域可连接的其他区域列表，供 LLM #1 plan 参考。
+        """
+        entity = kw.get("entity")
+        ge = kw.get("engine")
+        if not entity or not ge:
+            return ""
+        # 找到 NPC 所在的区域
+        zone_ent = None
+        for conn in entity.connected_entity_ids:
+            e = ge.get_entity(conn)
+            if e and _has_role(e.type_id, "region"):
+                zone_ent = e
+                break
+        if not zone_ent:
+            return ""
+        # 收集该区域连接的其他区域
+        neighbors = []
+        for conn in zone_ent.connected_entity_ids:
+            e = ge.get_entity(conn)
+            if e and _has_role(e.type_id, "region") and e != zone_ent:
+                neighbors.append(e.name)
+        if not neighbors:
+            return ""
+        connections = f"{zone_ent.name} ↔ {'、'.join(sorted(neighbors))}"
+        template = self._adapter_data.get("zone_connections", "")
+        return template.format(connections=connections)
+
     def slot_decision_guidance(self, **kw) -> str:
         entity = kw.get("entity")
         if not entity:
@@ -631,6 +675,12 @@ class NPCWorldAdapter(DomainAdapter):
 
     def slot_guidance_syntax(self, **kw) -> str:
         return self._adapter_data.get("guidance_syntax", "")
+
+    def slot_topo_diff_section(self, **kw) -> str:
+        topo_diff = kw.get("topo_diff", "")
+        if not topo_diff:
+            return ""
+        return "【本 tick 拓扑变化】\n" + topo_diff + "\n\n"
 
     def slot_recent_info_guidance(self, **kw) -> str:
         return self._adapter_data.get("recent_info_guidance", "")
@@ -856,8 +906,8 @@ class NPCWorldAdapter(DomainAdapter):
         return None
 
     def extract_json(self, text: str) -> str:
-        text = re.sub(r'^```(?:json)?\s*', '', text.strip())
-        text = re.sub(r'\s*```$', '', text)
+        text = _re.sub(r'^```(?:json)?\s*', '', text.strip())
+        text = _re.sub(r'\s*```$', '', text)
         text = text.strip()
         start_idx = -1
         for i, ch in enumerate(text):

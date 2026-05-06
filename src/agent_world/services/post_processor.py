@@ -1,11 +1,11 @@
 """
-Post Processor —— 拆分为 LLM #4a（拓扑层）+ LLM #4b（内容层）
+Post Processor —— 拆分为 LLM #4a（拓扑层）+ LLM #5（内容层）
 
 LLM #4a：根据 LLM #3 的故事描述 + 当前拓扑，输出拓扑层操作。
   - 输出：边数量变更 (delta / system_delta / recipe)
   - 不输出 attr，不输出 recent_info
 
-LLM #4b：在 #4a 拓扑变更已执行后，输出节点内容变更。
+LLM #5：在 #4a 拓扑变更已执行后，输出节点内容变更。
   - 输出：属性变更 (attr) + 近况投影 (recent_info)
   - 不输出任何边操作
 
@@ -31,10 +31,10 @@ logger = logging.getLogger("post_processor")
 class PostProcessor:
     """
     LLM #4a: 拓扑层操作 (delta / system_delta / recipe)
-    LLM #4b: 内容层操作 (attr + recent_info)
+    LLM #5: 内容层操作 (attr + recent_info)
 
     两个独立的 LLM 调用，顺序执行。
-    #4a 先执行（边操作），#4b 后执行（节点属性）。
+    #4a 先执行（边操作），#5 后执行（节点属性）。
     """
 
     def __init__(self, resolver=None, adapter=None, engine=None):
@@ -134,16 +134,24 @@ class PostProcessor:
         logger.info(f"[LLM #4a] 解析到 {len(ops)} 个拓扑操作")
         return ops
 
-    async def resolve_attr_and_recent_async(
+    # ─── Prompt 构建（共享基础） ───
+
+    async def resolve_projections_async(
         self,
         npc_plans: dict[str, str],
         stories: list[str],
         graph_engine: GraphEngine,
+        topo_diff: str = "",
         world_time_str: str | None = None,
         tick_duration_str: str | None = None,
         feedback: str = "",
     ) -> tuple[list[dict], dict[str, str]]:
-        """异步版 LLM #4b。与 resolve_attr_and_recent 共享 prompt/解析逻辑。"""
+        """异步版 LLM #5。基于已落地拓扑，输出 attr + recent_info。
+
+        与 resolve_attr_and_recent_async 共享 prompt/解析逻辑，区别：
+        - 用 llm5_projection 模板（含 topo_diff_section slot）
+        - 传入 topo_diff 让 LLM 知道拓扑真实发生了什么
+        """
         if not stories or not npc_plans:
             return [], {}
 
@@ -151,13 +159,14 @@ class PostProcessor:
             npc_plans=npc_plans,
             stories=stories,
             graph_engine=graph_engine,
+            topo_diff=topo_diff,
             world_time_str=world_time_str,
             tick_duration_str=tick_duration_str,
             feedback=feedback,
         )
 
         if not self._resolver:
-            logger.warning("[LLM #4b] 无 LLM resolver")
+            logger.warning("[LLM #5] 无 LLM resolver")
             return [], {}
 
         raw = await self._call_llm_async(prompt, "content_update")
@@ -166,10 +175,8 @@ class PostProcessor:
             return [], {}
 
         ops, recent_info_map = self._parse_output(raw, graph_engine)
-        logger.info(f"[LLM #4b] 解析到 {len(ops)} attr, {len(recent_info_map)} 条近况")
+        logger.info(f"[LLM #5] 解析到 {len(ops)} attr, {len(recent_info_map)} 条近况")
         return ops, recent_info_map
-
-    # ─── Prompt 构建（共享基础） ───
 
     def _build_topo_prompt(
         self,
@@ -206,11 +213,12 @@ class PostProcessor:
         npc_plans: dict[str, str],
         stories: list[str],
         graph_engine: GraphEngine,
+        topo_diff: str = "",
         world_time_str: str | None = None,
         tick_duration_str: str | None = None,
         feedback: str = "",
     ) -> str:
-        """构建 LLM #4b prompt：内容层操作。"""
+        """构建 LLM #5/#5 prompt：内容层操作。"""
         # 只包含故事中提到的 NPC（大幅减少 prompt 大小）
         story_text = " ".join(stories)
         from ..config.config_loader import get_all_label_mappings
@@ -238,13 +246,14 @@ class PostProcessor:
             active_plans = dict(npc_plans)
 
         return assemble(
-            "llm4b_content", self._adapter, graph_engine,
-            _caller="llm4b",
+            "llm5_projection" if topo_diff else "llm5_content", self._adapter, graph_engine,
+            _caller="llm5",
             time_str=world_time_str,
             tick_str=tick_duration_str,
             entities=entities,
             npc_plans=active_plans,
             stories=stories,
+            topo_diff=topo_diff,
             feedback=feedback,
         )
 
@@ -332,7 +341,7 @@ class PostProcessor:
 
     def _parse_output(self, raw: str, graph_engine: GraphEngine) -> tuple[list[dict], dict[str, str]]:
         """
-        解析 LLM #4b 输出：提取 attr + recent_info。
+        解析 LLM #5 输出：提取 attr + recent_info。
 
         Returns:
             (attr_ops, recent_info_map)
@@ -378,7 +387,7 @@ class PostProcessor:
             if real_target:
                 valid_ops.append({"op": "attr", "target": real_target, "attr": attr, "delta": delta, "description": desc})
 
-        logger.info(f"[LLM #4b] 解析到 {len(valid_ops)} attr, {len(recent_info_map)} 条近况")
+        logger.info(f"[LLM #5] 解析到 {len(valid_ops)} attr, {len(recent_info_map)} 条近况")
         return valid_ops, recent_info_map
 
     def _resolve_name(self, name_or_id: str, graph_engine: GraphEngine) -> str | None:

@@ -14,7 +14,6 @@
 from __future__ import annotations
 import logging
 import uuid
-from copy import deepcopy
 from typing import Any
 
 from ..entities.base_entity import Entity
@@ -60,6 +59,9 @@ class GraphEngine:
         优先精确匹配，fallback 按名称匹配或按前缀匹配。
         LLM 可能输出物品名（如 '小麦'/'item_小麦'）而非实体 ID。
         """
+        # 0. 去除花括号（LLM 可能输出 {entity_id} 格式）
+        raw = raw.strip("{}")
+
         # 1. 精确匹配
         if raw in self._entities:
             return raw
@@ -435,8 +437,9 @@ class GraphEngine:
             src = op.get("src", "")
             tgt = op.get("tgt", "")
 
-            # attr 操作使用 target 字段，不要求 src/tgt
-            if op_type != "attr" and (not src or not tgt):
+            # attr/recipe/system_delta 操作使用 target/consumes+produces/item 字段，不要求 tgt
+            no_tgt_ops = {"attr", "recipe", "system_delta"}
+            if op_type not in no_tgt_ops and (not src or not tgt):
                 results.append({"op": op_type, "status": "skipped", "reason": "缺少 src 或 tgt"})
                 continue
 
@@ -958,7 +961,8 @@ class TopoComponent:
         self.stories: list[str] = []
         self.topo_ops: list[dict] = []
         self.attr_ops: list[dict] = []
-        self.recent_info: dict[str, str] = field(default_factory=dict)
+        self.recent_info: dict[str, str] = {}
+        self.topo_diff: str = ""
         self.failures: list = []
 
 

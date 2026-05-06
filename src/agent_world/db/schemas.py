@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from ..models.npc import NPC, NPCStatus
 from ..models.world import World, Zone, WorldTime

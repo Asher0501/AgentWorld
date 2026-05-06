@@ -57,7 +57,7 @@ class Entity:
 
         self.attributes: dict[str, Any] = {}  # 基础属性（vitality, satiety, mood...）
         self.connected_entity_ids: set[str] = set()  # 连接的节点 ID 集合
-        self.recent_info: str = ""  # 近况投影（LLM #4b 写入，类型无关）
+        self.recent_info: str = ""  # 近况投影（LLM #5 写入，类型无关）
         self.conserved: bool = False  # 是否为守恒量（度守恒校验用）
         self.space: str = "physical"  # 空间类型: "physical" | "abstract"
 
