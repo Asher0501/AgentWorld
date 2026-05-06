@@ -137,11 +137,9 @@ class PipelineOrchestrator:
             return []
         logger.info(f"[LLM #1] {len(ctx.plan_map)} 个 NPC 的计划已生成")
 
-        # Step 2: LLM #2 — 拓扑结构变更（不变，全局视图）
-        await self._stage_topo_structure(ctx)
-
-        # Step 3: IntentExecutor — 执行结构变更（不变）
-        ctx.exec_results = self._execute_intents(npcs, ctx)
+        # Step 2-3: 跳过 LLM #2（拓扑结构变更由 LLM #4a 全权处理）
+        # 直接从当前图状态生成 exec_results 供故事生成使用
+        ctx.exec_results = self._exec_results_from_graph(ctx)
 
         # Step 4: 连通分量分割（新增）
         ctx.components = self._split_components(ctx)
@@ -260,31 +258,10 @@ class PipelineOrchestrator:
     # Step 3: IntentExecutor
     # ═══════════════════════════════════════════
 
-    def _execute_intents(self, npcs: list, ctx: PipelineContext) -> list[dict]:
-        """执行 LLM #2 的拓扑结构变更。"""
-        npc_ops: dict[str, list[dict]] = {}
-        for op in ctx.topo_structure_ops:
-            npc_ops.setdefault(op.get("src", ""), []).append(op)
-
+    def _exec_results_from_graph(self, ctx: PipelineContext) -> list[dict]:
+        """根据当前图状态生成 exec_results（跳过 LLM #2，NPC 区域关系由 LLM #4a 维护）。"""
         results = []
-        for neid, ops in sorted(npc_ops.items()):
-            info = ctx.npc_info.get(neid)
-            if not info or not ctx.plan_map.get(neid, ""):
-                continue
-            self.graph_engine.apply_edge_operations(ops)
-
-            ent = info["entity"]
-            zone_name = self._find_zone(ent)
-            interacted = self._collect_interacted(ops, neid)
-
-            results.append(self._exec_result_dict(
-                info, neid, zone_name, ctx.plan_map[neid], interacted, ent,
-            ))
-
-        # 有计划但无操作的 NPC
         for neid, plan in ctx.plan_map.items():
-            if neid in npc_ops:
-                continue
             info = ctx.npc_info.get(neid)
             if not info:
                 continue
@@ -293,7 +270,6 @@ class PipelineOrchestrator:
             results.append(self._exec_result_dict(
                 info, neid, zone_name, plan, [], ent,
             ))
-
         return results
 
     def _exec_result_dict(self, info, neid, zone, plan, interacted, ent):
