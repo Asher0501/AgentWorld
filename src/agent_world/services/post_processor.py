@@ -381,7 +381,16 @@ class PostProcessor:
             attr = op.get("attr", "")
             delta = op.get("delta", 0)
             desc = op.get("description", "")
-            if not target or not attr or delta == 0:
+            if not target or not attr:
+                continue
+            if isinstance(delta, str):
+                # 字符串 attr：直接设置（如 primary_goal）
+                if not delta.strip():
+                    continue
+            elif isinstance(delta, (int, float)):
+                if delta == 0:
+                    continue
+            else:
                 continue
             real_target = self._resolve_name(target, graph_engine)
             if real_target:

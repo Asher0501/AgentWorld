@@ -519,9 +519,10 @@ class NPCWorldAdapter(DomainAdapter):
         v = entity.attributes.get("vitality", 100)
         s = entity.attributes.get("satiety", 50)
         m = entity.attributes.get("mood", 50)
+        pg = entity.attributes.get("primary_goal", "暂无")
         zone = _get_zone_name(entity, kw.get("engine"))
         template = self._adapter_data.get("entity_identity", "")
-        return template.format(name=entity.name, role=entity.role or "?", zone=zone, v=v, s=s, m=m)
+        return template.format(name=entity.name, role=entity.role or "?", zone=zone, v=v, s=s, m=m, primary_goal=pg)
 
     def slot_personality(self, **kw) -> str:
         tags = kw.get("personality_tags", [])
@@ -641,6 +642,7 @@ class NPCWorldAdapter(DomainAdapter):
                 f"{i['item_name']}x{i['quantity']}" for i in inv
             ) if inv else "空手"
             zone = _get_zone_name(ent, engine)
+            goal = ent.attributes.get("primary_goal", "-")
             lines.append(line_template.format(
                 name=ent.name,
                 role=ent.role or "?",
@@ -649,6 +651,7 @@ class NPCWorldAdapter(DomainAdapter):
                 s=ent.attributes.get("satiety", 50),
                 m=ent.attributes.get("mood", 50),
                 inv=inv_str,
+                goal=goal,
             ))
         return "".join(lines) + "\n\n"
 

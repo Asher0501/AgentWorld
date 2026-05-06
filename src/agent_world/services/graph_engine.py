@@ -251,18 +251,23 @@ class GraphEngine:
         logger.debug(f"[Graph] modify_qty: {src_eid}→{tgt_eid} {delta:+d} → {new_qty}")
         return True
 
-    def modify_entity_attr(self, entity_id: str, attr: str, delta: float, clamp: bool = True) -> bool:
-        """修改实体的属性值（delta 可为正负）"""
+    def modify_entity_attr(self, entity_id: str, attr: str, delta: float | str, clamp: bool = True) -> bool:
+        """修改实体的属性值（delta 可为数值偏移或字符串设置）"""
         ent = self.get_entity(entity_id)
         if not ent:
             logger.warning(f"[Graph] modify_attr: 实体不存在 {entity_id}")
             return False
-        current = ent.attributes.get(attr, 0.0) or 0.0
-        new_val = current + delta
-        if clamp:
-            new_val = max(0.0, min(100.0, new_val))
-        ent.attributes[attr] = new_val
-        logger.debug(f"[Graph] modify_attr: {entity_id}.{attr} {delta:+} → {new_val:.0f}")
+        if isinstance(delta, str):
+            # 字符串属性：直接设置
+            ent.attributes[attr] = delta
+            logger.debug(f"[Graph] modify_attr: {entity_id}.{attr} = \"{delta}\"")
+        else:
+            current = ent.attributes.get(attr, 0.0) or 0.0
+            new_val = current + delta
+            if clamp:
+                new_val = max(0.0, min(100.0, new_val))
+            ent.attributes[attr] = new_val
+            logger.debug(f"[Graph] modify_attr: {entity_id}.{attr} {delta:+} → {new_val:.0f}")
         return True
 
     def _adjust_delta_pairs(self, ops: list[EdgeOperation]) -> list[EdgeOperation]:
