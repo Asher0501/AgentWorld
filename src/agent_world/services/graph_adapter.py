@@ -200,7 +200,7 @@ def init_graph_edges_from_adapter(ge, npcs: list, zones: list):
         if zone_key:
             zone_eid = _resolve_zone_eid(ge, zone_key, zone_lookup)
             if zone_eid:
-                ge.connect(npc_eid, zone_eid)
+                ge.connect(npc_eid, zone_eid, qty=1)
 
         # NPC → 物品（初始库存）
         raw_inv = _normalize_inventory(cfg)
