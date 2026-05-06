@@ -1018,6 +1018,8 @@ class NPCWorldAdapter(DomainAdapter):
         return stripped
 
     def _parse_topo_output(self, raw: str, graph, label_map: dict[str, str] | None = None) -> list[GraphOp]:
+        from ...config.config_loader import get_world_config
+        _allow_unreg = get_world_config("allow_unregistered_entity", False)
         raw = raw.strip()
         json_str = self.extract_json(raw)
         try:
@@ -1064,6 +1066,26 @@ class NPCWorldAdapter(DomainAdapter):
                     continue
                 real_tgt = self.resolve_name(tgt, graph)
                 real_item = self.resolve_name(item, graph)
+                if not real_item and _allow_unreg:
+                    # allow_unregistered_entity 开启时，自动创建不存在的实体
+                    from ...entities.base_entity import EntityNode
+                    from ...config.config_loader import prefix_to_type_id, get_type_prefix
+                    eid = item.replace("{", "").replace("}", "").strip()
+                    # 无前缀时，system_delta 的 item 通常是 zone，补 zone_ 前缀
+                    prefixes = get_type_prefix()
+                    has_prefix = any(eid.startswith(p) for p in prefixes.values())
+                    if not has_prefix:
+                        eid = f"zone_{eid}"
+                    type_id = prefix_to_type_id(eid)
+                    # 已有实体可能用不同 ID（如 zone_白果园 ≠ 白果园），再查一次
+                    existing = graph.get_entity(eid)
+                    if existing:
+                        real_item = existing.entity_id
+                    else:
+                        ent = EntityNode(entity_id=eid, type_id=type_id, name=item)
+                        graph.register_entity(ent)
+                        real_item = eid
+                        logger.info(f"[Adapter] auto-registered entity: {eid} (type_id={type_id})")
                 if real_tgt and real_item:
                     valid_ops.append({"op": "system_delta", "tgt": real_tgt, "item": real_item, "delta": delta})
             elif op_type == "recipe":
