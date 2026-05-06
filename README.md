@@ -1,13 +1,13 @@
 # AgentWorld
 
 <p align="center">
-  <img src="agentworld_graph_banner.png" alt="AgentWorld — Graph Topology at the Core" width="100%">
+  <img src="agentworld_arch.svg" alt="AgentWorld — Pipeline Architecture" width="100%">
   <br/>
   <em><b>Graph is not a feature. Graph is the system.</b></em>
   <br/>
   <em><b>图拓扑不是组件，是整个系统的骨架。</b></em>
   <br/>
-  <small>✨ <b>拓扑-内容解耦</b> · 分量并行管线 · 统一 LLM 入口 · 度守恒校验 ✨</small>
+  <small>✨ <b>拓扑-内容解耦</b> · 分量并行管线 · 统一 LLM 入口 · 度守恒校验 · 新增实体开关 ✨</small>
 </p>
 
 ---
@@ -287,6 +287,42 @@ prompt = [
 - `"runtime"` — Live data (clock, feedback)
 
 ---
+
+## Entity Existence Toggle · 新增实体开关
+
+> **EN**: Controls whether LLM operations can reference entities not present in the tag map (e.g., newly created items from recipes, NPC-generated artifacts). When **off** (default), every `src`/`tgt` must match an existing graph node. When **on**, the engine dynamically creates missing nodes and the `entity_existence` check in verification layer is bypassed — enabling runtime recipe products and emergent item creation.
+>
+> **CN**: 控制 LLM 操作是否可以引用标签映射表中不存在的实体（例如 recipe 产出的新物品、NPC 生成的新器物）。**关闭时**（默认），每个 `src`/`tgt` 必须在已有图节点中；**开启时**，引擎动态创建缺失节点，校验层的 `entity_existence` 检查被跳过——允许运行时 recipe 产物和涌现物品创建。
+
+```json
+// node_config.json
+{
+  "world": {
+    "allow_unregistered_entity": false  // ← toggle this
+  },
+  "verification": {
+    "checks": {
+      "entity_existence": {
+        "type": "dead_code",
+        "enabled": true    // ← toggled by allow_unregistered_entity
+      }
+    }
+  }
+}
+```
+
+### Effect on Pipeline · 对管线的影响
+
+| Setting · 设置 | LLM #4a / delta ops | Recipe execution · Recipe 执行 | Risk · 风险 |
+|:-------------|:-------------------|:------------------------------|:----------|
+| **`false`** (default · 默认) | Blocked if target missing · 目标缺失则拦截 | Only existing item nodes · 仅限已有物品 | No hallucinated entries · 无幻影实体 |
+| **`true`** | Auto-create missing nodes · 自动创建缺失节点 | ✅ New recipe products（炖菜, 法术书, ...） | LLM may hallucinate fictional entities · LLM 可能虚构实体 |
+
+### Known Side Effects · 已知副作用
+
+- **No entity_constraints slot**: When `true`, LLM #1's prompt is ~3200 chars shorter but `entity_constraints` slot is empty → LLM takes **2-3× longer** to plan (116.6s vs 40-68s observed)
+- **Conservation rule still active**: The Σ=0 check (度守恒) is independent — even with new entities, trades must balance
+- **New entities are unlabeled**: Dynamically created nodes get no tag map entry → invisible to the translation layer in later ticks
 
 ## Conservation Validation · 度守恒
 
