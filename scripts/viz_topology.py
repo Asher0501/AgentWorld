@@ -37,7 +37,7 @@ import networkx as nx
 import numpy as np
 
 fm.fontManager.addfont("/home/asher/.fonts/NotoSansCJKsc-Regular.otf")
-CJK = lambda s=8: fm.FontProperties(family='Noto Sans CJK SC', size=s)
+CJK = lambda s=7: fm.FontProperties(family='Noto Sans CJK SC', size=s)
 
 G = nx.DiGraph()
 zone_list = list(ZONE_NAMES.keys())
@@ -99,12 +99,12 @@ np.random.seed(42)
 pos = nx.spring_layout(G_layout, k=0.2, iterations=200, scale=0.5, seed=42)
 
 # ── Figure ──
-fig = plt.figure(figsize=(13, 11), facecolor='#0a0a16')
-fig.suptitle("The Witcher World — Global Topology  tick 008", fontsize=15,
-             color='#e8dcc5', fontproperties=CJK(14), y=0.975)
+fig = plt.figure(figsize=(14, 9), facecolor='#0a0a16')
+fig.suptitle("The Witcher World — Global Topology  tick 008", fontsize=14,
+             color='#e8dcc5', fontproperties=CJK(13), y=0.976)
 
 # Main plot
-ax_m = fig.add_axes([0.01, 0.01, 0.76, 0.93])
+ax_m = fig.add_axes([0.02, 0.02, 0.74, 0.92])
 ax_m.set_facecolor('#0a0a16')
 xs = [p[0] for p in pos.values()]; ys = [p[1] for p in pos.values()]
 pad = 0.06
@@ -150,14 +150,14 @@ for z in zone_list:
 # ── Zone nodes ──
 for z in zone_list:
     x,y = pos[z]; nc = len(zones.get(z,[]))
-    r = 0.28 + nc*0.025
-    for gr in [r+0.05, r+0.025]:
-        ax_m.add_patch(plt.Circle((x,y), gr, fc='none', ec='#5a8abb', lw=0.8, alpha=0.12))
-    ax_m.add_patch(plt.Circle((x,y), r, fc='#1a2a4a', ec='#6a9abb', lw=3.5, zorder=4, alpha=0.95))
+    r = 0.15 + nc*0.015
+    for gr in [r+0.03, r+0.015]:
+        ax_m.add_patch(plt.Circle((x,y), gr, fc='none', ec='#5a8abb', lw=0.5, alpha=0.10))
+    ax_m.add_patch(plt.Circle((x,y), r, fc='#1a2a4a', ec='#6a9abb', lw=2.5, zorder=4, alpha=0.95))
     ax_m.text(x, y-0.04, f"{z}", ha='center', va='center', color='#ece4d0',
-             fontproperties=CJK(9), zorder=5)
+             fontproperties=CJK(7.5), zorder=5)
     ax_m.text(x, y+0.04, ZONE_NAMES[z], ha='center', va='center', color='#8aabbb',
-             fontproperties=CJK(7), zorder=5, style='italic')
+             fontproperties=CJK(5.5), zorder=5, style='italic')
     if nc:
         ax_m.text(x+r*0.45, y+r*0.45, f"{nc}N", ha='center', va='center',
                  color='#e8b84a', fontproperties=CJK(6),
@@ -176,8 +176,8 @@ for name, nid in npc_nodes.items():
     if goal: lines.append(f"🎯{goal[:12]}")
     txt = "\n".join(lines)
     ax_m.text(x, y, txt, ha='center', va='center', color='#ece4d0',
-             fontproperties=CJK(7.5),
-             bbox=dict(boxstyle='round,pad=0.35', fc=mood_col, ec='#0a0a16', lw=2, alpha=0.92), zorder=6)
+             fontproperties=CJK(6),
+             bbox=dict(boxstyle='round,pad=0.25', fc=mood_col, ec='#0a0a16', lw=1.5, alpha=0.92), zorder=6)
 
 # ── Item nodes ──
 for iid, iname in item_nodes.items():
@@ -186,13 +186,13 @@ for iid, iname in item_nodes.items():
     is_d = iname in delta_items
     ec = '#e8b84a' if is_d else '#4a5a7a'
     ax_m.text(x, y, f"◈ {iname}", ha='center', va='center', color='#ece4d0',
-             fontproperties=CJK(8),
-             bbox=dict(boxstyle='round,pad=0.25', fc=col, ec=ec, lw=3.5 if is_d else 2, alpha=0.92), zorder=5)
+             fontproperties=CJK(6.5),
+             bbox=dict(boxstyle='round,pad=0.18', fc=col, ec=ec, lw=2.5 if is_d else 1.5, alpha=0.92), zorder=5)
     owners = item_owners.get(iid, {})
     if owners:
         ow = "/".join(owners)
-        ax_m.text(x, y-0.05, f"◀ {ow}", ha='center', va='top', color='#9aab9a',
-                 fontproperties=CJK(5.5), zorder=7)
+        ax_m.text(x, y-0.04, f"◀ {ow}", ha='center', va='top', color='#9aab9a',
+                 fontproperties=CJK(4.5), zorder=7)
 
 # ── RIGHT PANEL ──
 ax_r = fig.add_axes([0.79, 0.01, 0.20, 0.93]); ax_r.axis('off'); ax_r.set_facecolor('#0a0a16')
