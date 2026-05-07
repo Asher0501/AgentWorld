@@ -7,9 +7,11 @@ NPCWorldAdapter — NPC/Agent 世界的域适配器实现。
 from __future__ import annotations
 import json
 import logging
+import math
 import os
 import re as _re
 from typing import Any, Optional
+from collections import Counter
 
 from ..adapter import (
     DomainAdapter,
@@ -22,6 +24,67 @@ from ..adapter import (
     SlotDef,
     StateChange,
 )
+
+
+# ── 实体名模糊匹配（内积向量相似度）──
+# 在 auto-register 新实体前检查是否与已有实体名高度相似
+SIMILARITY_THRESHOLD = 0.48  # 内积阈值，高于此值判定为同一实体
+
+
+def _name_to_ngram_vec(name: str) -> dict[str, float]:
+    """将实体名转为字符 n-gram 向量（2-gram + 3-gram 联合）。"""
+    padded = f"__{name}__"
+    c = Counter()
+    for i in range(len(padded) - 1):
+        c[padded[i:i+2]] += 1  # 2-gram
+    for i in range(len(padded) - 2):
+        c[padded[i:i+3]] += 1  # 3-gram
+    # L2 normalize
+    norm = math.sqrt(sum(v * v for v in c.values()))
+    if norm == 0:
+        return {}
+    return {k: v / norm for k, v in c.items()}
+
+
+def _entity_name_similarity(name_a: str, name_b: str) -> float:
+    """两个实体名的内积相似度。"""
+    va = _name_to_ngram_vec(name_a)
+    vb = _name_to_ngram_vec(name_b)
+    # 取较短向量的维度做内积
+    shorter, longer = (va, vb) if len(va) <= len(vb) else (vb, va)
+    dot = 0.0
+    for k, v in shorter.items():
+        if k in longer:
+            dot += v * longer[k]
+    return dot
+
+
+def _strip_prefix(name: str) -> str:
+    """去掉 zone_ / item_ / npc_ 等前缀用于语义对比。"""
+    for pfx in ("zone_", "item_", "npc_", "object_"):
+        if name.startswith(pfx):
+            return name[len(pfx):]
+    return name
+
+
+def _find_similar_entity(name: str, graph, threshold: float = SIMILARITY_THRESHOLD) -> str | None:
+    """在图中查找与 name 最相似的已有实体 ID。高于 threshold 返回 match，否则 None。"""
+    clean = _strip_prefix(name.replace("{", "").replace("}", "").strip())
+    best_score = 0.0
+    best_id = None
+    try:
+        for eid, ent in graph.entities.items():
+            raw_name = ent.name if hasattr(ent, 'name') else ent.entity_id
+            if not raw_name:
+                continue
+            ent_clean = _strip_prefix(str(raw_name))
+            score = _entity_name_similarity(clean, ent_clean)
+            if score > best_score:
+                best_score = score
+                best_id = eid
+    except (AttributeError, TypeError):
+        pass
+    return best_id if best_score >= threshold else None
 
 logger = logging.getLogger("NPCWorldAdapter")
 
@@ -906,6 +969,10 @@ class NPCWorldAdapter(DomainAdapter):
                 return ent.entity_id
         if graph.get_entity(name):
             return name
+        # ★ 最后防线：字符 n-gram 模糊匹配
+        fuzzy = _find_similar_entity(name, graph)
+        if fuzzy:
+            return fuzzy
         return None
 
     def extract_json(self, text: str) -> str:
@@ -1081,10 +1148,16 @@ class NPCWorldAdapter(DomainAdapter):
                     if existing:
                         real_item = existing.entity_id
                     else:
-                        ent = Entity(entity_id=eid, name=item)
-                        graph.register_entity(ent)
-                        real_item = eid
-                        logger.info(f"[Adapter] auto-registered entity: {eid}")
+                        # ★ 模糊匹配：检查新实体名是否与已有实体高度相似
+                        similar = _find_similar_entity(item, graph)
+                        if similar:
+                            real_item = similar
+                            logger.info(f"[Adapter] fuzzy match: {eid} ~ {similar} (dot={_entity_name_similarity(item.replace('{','').replace('}','').strip(), graph.entities[similar].name if hasattr(graph.entities[similar],'name') else similar):.3f})")
+                        else:
+                            ent = Entity(entity_id=eid, name=item)
+                            graph.register_entity(ent)
+                            real_item = eid
+                            logger.info(f"[Adapter] auto-registered entity: {eid}")
                 if real_tgt and real_item:
                     valid_ops.append({"op": "system_delta", "tgt": real_tgt, "item": real_item, "delta": delta})
             elif op_type == "recipe":
