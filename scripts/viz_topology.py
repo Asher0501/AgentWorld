@@ -4,7 +4,7 @@ import sys, json, math, os, warnings
 warnings.filterwarnings("ignore")
 sys.path.insert(0, os.path.expanduser("~/Documents/01_Projects/05_AgentWorld/src"))
 
-snap = json.load(open("/tmp/full_tick/tick_008/snapshot_after.json"))
+snap = json.load(open("/tmp/full_tick/tick_009/snapshot_after.json"))
 cfg   = json.load(open("src/agent_world/config/node_config.json"))
 zone_links = cfg.get("connections",{}).get("zone",{})
 
