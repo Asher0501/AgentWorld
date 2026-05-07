@@ -1,28 +1,32 @@
 # AgentWorld
 
 <p align="center">
-  <img src="agentworld_arch.svg" alt="AgentWorld — Pipeline Architecture" width="100%">
+  <img src="agentworld_arch_domain_free.svg" alt="AgentWorld — Domain-Agnostic Architecture" width="100%">
+  <br/>
+  <img src="agentworld_pipeline_content_free.svg" alt="AgentWorld — Pipeline Flow" width="100%">
+  <br/>
+  <img src="agentworld_pipeline_concrete.svg" alt="AgentWorld — Concrete Pipeline Example (tick_001)" width="100%">
   <br/>
   <em><b>Graph is not a feature. Graph is the system.</b></em>
   <br/>
   <em><b>图拓扑不是组件，是整个系统的骨架。</b></em>
   <br/>
-  <small>✨ <b>拓扑-内容解耦</b> · 分量并行管线 · 统一 LLM 入口 · 度守恒校验 · 新增实体开关 ✨</small>
+  <small>✨ <b>拓扑-内容解耦</b> · 分量前置并行管线 · 统一 LLM 入口 · 度守恒校验 · 新增实体开关 · per-type max_nodes ✨</small>
 </p>
 
 ---
 
 > **AgentWorld: A Domain-Agnostic, Graph-First, LLM-Driven Multi-Agent Simulation Engine**
 >
-> **EN**: The graph is the first principle — entities are nodes, relationships are edges, and LLMs reason over the topology to produce emergent behavior. **Topology–content decoupling** is the key innovation: the engine kernel operates on abstract, content-free node IDs, while all semantic knowledge lives in `domain.json`. This means swapping `domain.json` transforms the same engine into a village simulator, a protein interaction network, a fantasy economy, or an IoT sensor grid — **with zero code changes**. The system features a component-split pipeline that partitions the world by connected subgraph, enabling per-component parallel execution and isolated retry.
+> **EN**: The graph is the first principle — entities are nodes, relationships are edges, and LLMs reason over the topology to produce emergent behavior. **Topology–content decoupling** is the key innovation: the engine kernel operates on abstract, content-free node IDs, while all semantic knowledge lives in `domain.json`. This means swapping `domain.json` transforms the same engine into a village simulator, a protein interaction network, a fantasy economy, or an IoT sensor grid — **with zero code changes**. The pipeline now performs **component split first**, then runs LLM #1 through #5 per component in parallel via `asyncio.gather`, eliminating the old global LLM #1 / LLM #2 / IntentExecutor stages. Each component is fully self-contained (plan → exec → story → topoΔ → validate → project).
 >
-> **CN**: 图拓扑是第一性原理——实体是节点，关系是边，LLM 在拓扑之上推理产生涌现行为。**拓扑-内容解耦**是核心创新：引擎内核操作抽象的、无内容的节点 ID，所有语义知识存在于 `domain.json` 中。这意味着切换 `domain.json` 即可将同一个引擎转变为村庄模拟器、蛋白质交互网络、幻想经济或 IoT 传感器网格——**零代码改动**。系统采用分量分割管线，按连通子图划分世界，支持逐分量并行执行和隔离重试。
+> **CN**: 图拓扑是第一性原理——实体是节点，关系是边，LLM 在拓扑之上推理产生涌现行为。**拓扑-内容解耦**是核心创新：引擎内核操作抽象的、无内容的节点 ID，所有语义知识存在于 `domain.json` 中。管线现已改为**分量前置**：先做拓扑连通分量分割，再逐分量并行执行 LLM #1 → #5，移除了旧的分量后置流程。每个分量自我完备。
 
 ---
 
 ## Architecture Overview · 架构总览
 
-> **Figure 1.  AgentWorld system architecture.** The engine kernel (gray) is domain-agnostic — it operates on abstract graph topology with no knowledge of entity semantics. All domain content lives in `domain.json` (blue), injected into the pipeline via slot-based prompt assembly. The topology-content decoupling (bold dashed line) enables cross-domain transfer: swapping `domain.json` creates a new simulation world with zero code changes.
+> **Figure 1. AgentWorld system architecture (updated — component-first pipeline).** The engine kernel (gray) is domain-agnostic. **Component split runs first**, then per-component pipeline runs in parallel. The old global LLM #1 / LLM #2 / IntentExecutor passes are eliminated. Each component gets its own LLM #1 (per-NPC planning), exec_results, LLM #3 (narrative), LLM #4a (topo delta + retry), validation, and LLM #5 (attribute projection). Results are merged and applied to the graph engine in one commit.
 
 ```mermaid
 flowchart TB
@@ -33,42 +37,34 @@ flowchart TB
 
         GE["Graph Engine<br/><small>pure topology: entities=nodes, relationships=edges<br/>纯拓扑：实体=节点，关系=边</small>"]
 
-        subgraph PIPELINE["Seven-Stage LLM Pipeline · 七阶段 LLM 管线"]
+        subgraph PIPELINE["Component-First Pipeline · 分量前置管线"]
             direction TB
 
-            L1["LLM #1<br/>Planning<br/>规划"]
-            L2["LLM #2<br/>Topo Structure<br/>拓扑结构"]
-            IE["Intent Executor<br/>执行器<br/><small>code, not LLM</small>"]
+            SPLIT["🔀 Component Split<br/>分量分割<br/><small>拓扑连通分量 → 6+ 子图</small>"]
 
-            subgraph COMP["Per-Component Pipeline × N<br/>逐分量管线（分量数取决于连通分量数）"]
+            subgraph COMP["Per-Component Pipeline × N (asyncio.gather)<br/>逐分量并行 (LLM #1 → #3 → #4a → #5)"]
                 direction TB
+                L1["LLM #1<br/>Planning<br/>规划"]
+                IE["Exec Results<br/>执行结果<br/><small>inline, no LLM</small>"]
                 L3["LLM #3<br/>Narrative<br/>叙事"]
-                L4a["LLM #4a<br/>Topo Delta<br/>拓扑增量"]
-                CV["Conservation Validator<br/>度守恒校验<br/><small>Σ=0 check</small>"]
-                L4b["LLM #4b<br/>Content / Attr<br/>属性变化"]
-                L5["LLM #5<br/>Verification<br/>校验"]
-                RET{{"Retry (component only)<br/>仅重跑本分量"}}
-                L3 --> L4a --> CV --> L4b --> L5
-                L5 -->|"Fail"| RET -.-> L3
+                L4a["LLM #4a<br/>Topo Delta<br/>拓扑增量<br/><small>+ retry path</small>"]
+                CV["Conservation Validator<br/>度守恒校验<br/><small>capacity, entity existence</small>"]
+                L5["LLM #5<br/>Attribute Projection<br/>属性投影"]
+                RET{{"Retry<br/>(component only)"}}
+                L1 --> IE --> L3 --> L4a --> CV --> L5
+                L5 -->|Fail| RET -.-> L4a
             end
 
-            CP["Component Split<br/>分量分割<br/><small>BFS, zone-boundary-blocked</small>"]
-            MG["Merge + Apply<br/>归并 + 执行"]
+            MERGE["Merge Components<br/>分量归并"]
         end
 
+        SPLIT --> COMP --> MERGE -->|commit| GE
         DB --- GE
-        GE --> L1
-        L1 --> L2
-        L2 --> IE
-        IE --> CP
-        CP --> COMP
-        COMP -->|"Pass"| MG
-        MG --> GE
     end
 
     subgraph CONFIG["Domain-Specific Configuration · 域特定配置"]
         DOMAIN["domain.json<br/><small>entity types, prompt slots,<br/>recipes, translation maps,<br/>conservation rules</small>"]
-        NODE["node_config.json<br/><small>node ontology, type hierarchy,<br/>role-to-prefix mapping</small>"]
+        NODE["node_config.json<br/><small>node ontology, type hierarchy,<br/>role-to-prefix mapping,<br/>max_nodes per type</small>"]
     end
 
     TL["Translation Layer<br/>翻译层<br/><small>abstract letters → NL<br/>抽象标签 → 自然语言</small>"]
@@ -76,38 +72,40 @@ flowchart TB
 
     CONFIG -.->|"slot injection"| COMP
     CONFIG -.->|"entity definitions"| GE
+    GE -.->|"topology"| SPLIT
 
-    style KERNEL fill:#f5f5f5,stroke:#333,stroke-width:2px
-    style CONFIG fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,stroke-dasharray: 5 5
+    style KERNEL fill:#f8fafc,stroke:#94a3b8,stroke-width:2px
+    style CONFIG fill:#eff6ff,stroke:#3b82f6,stroke-width:2px,stroke-dasharray: 5 5
     style TL fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px
-    style DB fill:#e0e0e0,stroke:#666
-    style GE fill:#e0e0e0,stroke:#333
-    style PIPELINE fill:#fafafa,stroke:#666,stroke-width:1px
-    style COMP fill:#fafafa,stroke:#666,stroke-width:1px,stroke-dasharray: 3 3
-    style DOMAIN fill:#bbdefb,stroke:#1565c0
-    style NODE fill:#bbdefb,stroke:#1565c0
-    style CP fill:#e0e0e0,stroke:#333
-    style MG fill:#e0e0e0,stroke:#333
-    style L1 fill:#e0e0e0
-    style L2 fill:#e0e0e0
-    style IE fill:#e0e0e0
-    style L3 fill:#e0e0e0
-    style L4a fill:#e0e0e0
-    style CV fill:#e0e0e0
-    style L4b fill:#e0e0e0
-    style L5 fill:#e0e0e0
-    style RET fill:#e0e0e0
+    style DB fill:#f0fdf4,stroke:#86efac,stroke-width:1px
+    style GE fill:#eef2ff,stroke:#818cf8,stroke-width:2px
+    style PIPELINE fill:#fafafa,stroke:#94a3b8,stroke-width:1px
+    style COMP fill:#fafafa,stroke:#94a3b8,stroke-width:1px,stroke-dasharray: 3 3
+    style DOMAIN fill:#dbeafe,stroke:#60a5fa,stroke-width:1px
+    style NODE fill:#dbeafe,stroke:#60a5fa,stroke-width:1px
+    style SPLIT fill:#6366f1,color:#fff
+    style L1 fill:#8b5cf6,color:#fff
+    style IE fill:#3b82f6,color:#fff
+    style L3 fill:#6366f1,color:#fff
+    style L4a fill:#10b981,color:#fff
+    style CV fill:#f59e0b
+    style L5 fill:#ef4444,color:#fff
+    style RET fill:#ef4444,color:#fff
+    style MERGE fill:#475569,color:#fff
 ```
 
 ---
 
 ### Pipeline Stage Details · 管线阶段详解
 
-| Stage · 阶段 | Type · 类型 | Input · 输入 | Output · 输出 | Constraint · 约束强度 |
-|:----------|:----------|:-----------|:------------|:-------------------|
-| **#1 Plan · 规划** | LLM · 语言模型 | Entity state + topology · 实体状态+拓扑 | Natural language plan · NL 计划 | Free text · 自由文本 |
-| **#2 Topo Structure · 拓扑结构** | LLM · 语言模型 | All NPC plans · 所有 NPC 计划 | `connect`/`disconnect`/`set_qty` · 结构化 JSON | JSON schema · JSON 模式 |
-| **↳ Intent Executor · 执行器** | Code · 代码 | Topo ops · 拓扑操作 | Applied graph mutations · 图变更 | Deterministic · 确定性 |
+| Stage · 阶段 | Type · 类型 | Input · 输入 | Output · 输出 | Retry · 重试 |
+|:----------|:----------|:-----------|:------------|:------------|
+| **#1 Plan · 规划** | LLM · 语言模型 | Entity state + topology · 实体状态+拓扑 | Natural language plan · NL 计划 | — |
+| **↳ Exec Results · 执行结果** | Code · 代码 | GraphEngine · 图引擎 | Per-NPC exec dict · 执行字典 | — |
+| **#3 Narrative · 叙事** | LLM · 语言模型 | Plans + exec_results · 计划+结果 | Story text · 故事文本 | — |
+| **#4a Topo Delta · 拓扑增量** | LLM · 语言模型 | Plans + stories + topology · 计划+故事+拓扑 | `delta`/`system_delta`/`recipe` ops · 结构化 JSON | ✅ 校验失败时重试 |
+| **↳ Conservation Validator · 度守恒校验** | Code · 代码 | Topo ops · 拓扑操作 | Pass / Fail · 通过/失败 | 触发重试 |
+| **#5 Attribute Projection · 属性投影** | LLM · 语言模型 | Results + stories + topo_diff · 结果+故事+拓扑差 | Attribute deltas + recent_info · 属性变化+近况 | — |
 | **↳ Component Split · 分量分割** | Code · 代码 | Executed graph · 执行后图 | N connected components · N 个连通分量 | BFS, zone-blocked |
 | **#3 Narrative · 叙事** | LLM · 语言模型 | Translated topo + plans · 翻译后拓扑+计划 | Story per component · 逐分量故事 | Free text · 自由文本 |
 | **#4a Topo Delta · 拓扑增量** | LLM · 语言模型 | Stories + graph state · 故事+图状态 | `delta`/`system_delta`/`recipe` · 结构化 JSON | JSON schema + Σ=0 |

@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 700" font-family="'Segoe UI', 'Noto Sans SC', Arial, sans-serif">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#4f46e5"/></linearGradient>
+    <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b82f6"/><stop offset="1" stop-color="#2563eb"/></linearGradient>
+    <linearGradient id="g3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#10b981"/><stop offset="1" stop-color="#059669"/></linearGradient>
+    <linearGradient id="g4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f59e0b"/><stop offset="1" stop-color="#d97706"/></linearGradient>
+    <linearGradient id="g5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ef4444"/><stop offset="1" stop-color="#dc2626"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.12"/></filter>
+  </defs>
+
+  <rect width="1100" height="700" fill="#f8fafc" rx="8"/>
+  <text x="550" y="32" text-anchor="middle" font-size="18" font-weight="700" fill="#1e293b">🧱 Domain-Agnostic Architecture</text>
+  <text x="550" y="50" text-anchor="middle" font-size="12" fill="#94a3b8">Graph Engine Core — entity types, edges, attributes, components</text>
+
+  <!-- ====== GRAPH ENGINE CORE ====== -->
+  <rect x="40" y="70" width="180" height="50" rx="8" fill="url(#g1)" filter="url(#shadow)"/>
+  <text x="130" y="95" text-anchor="middle" font-size="14" fill="#fff" font-weight="700">GraphEngine</text>
+  <text x="130" y="110" text-anchor="middle" font-size="10" fill="#c7d2fe">multi-digraph · edge-weighted</text>
+
+  <!-- Core concepts -->
+  <rect x="40" y="135" width="180" height="120" rx="6" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1"/>
+  <text x="50" y="152" font-size="11" font-weight="600" fill="#4338ca">Entities</text>
+  <text x="50" y="168" font-size="10" fill="#475569">· typed nodes (type_id:)</text>
+  <text x="50" y="183" font-size="10" fill="#475569">· typed-entity prefix</text>
+  <text x="50" y="198" font-size="10" fill="#475569">· mixin roles (actor, stage)</text>
+  <text x="50" y="213" font-size="10" fill="#475569">· max_nodes per type</text>
+  <text x="50" y="228" font-size="10" fill="#475569">· auto-create toggle</text>
+  <text x="50" y="243" font-size="10" fill="#475569">· inline attributes (str)</text>
+
+  <rect x="40" y="265" width="180" height="100" rx="6" fill="#eef2ff" stroke="#c7d2fe" stroke-width="1"/>
+  <text x="50" y="282" font-size="11" font-weight="600" fill="#4338ca">Edges</text>
+  <text x="50" y="298" font-size="10" fill="#475569">· weighted: src → tgt (qty)</text>
+  <text x="50" y="313" font-size="10" fill="#475569">· conserved vs terminal</text>
+  <text x="50" y="328" font-size="10" fill="#475569">· labels, metadata</text>
+  <text x="50" y="343" font-size="10" fill="#475569">· system_delta (position)</text>
+  <text x="50" y="358" font-size="10" fill="#475569">· recipe edges</text>
+
+  <!-- ====== RIGHT SIDE: DATA PIPELINE ====== -->
+  <rect x="250" y="70" width="810" height="350" rx="10" fill="#fff" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text x="260" y="92" font-size="13" font-weight="700" fill="#334155">Data Pipeline (pipeline_orchestrator)</text>
+
+  <!-- Stage 0: Input -->
+  <rect x="265" y="105" width="80" height="30" rx="6" fill="#e2e8f0"/>
+  <text x="305" y="124" text-anchor="middle" font-size="10" font-weight="600" fill="#475569">Graph state</text>
+
+  <path d="M345,120 L365,120" stroke="#94a3b8" stroke-width="1.5"/>
+
+  <!-- Stage 1: Component split -->
+  <rect x="370" y="100" width="95" height="40" rx="8" fill="url(#g1)" filter="url(#shadow)"/>
+  <text x="417" y="118" text-anchor="middle" font-size="11" fill="#fff" font-weight="700">Component</text>
+  <text x="417" y="132" text-anchor="middle" font-size="10" fill="#c7d2fe">Split</text>
+
+  <path d="M465,120 L485,120" stroke="#6366f1" stroke-width="1.5"/>
+
+  <!-- Per-component pipeline -->
+  <rect x="490" y="95" width="540" height="220" rx="8" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="760" y="112" text-anchor="middle" font-size="11" font-weight="600" fill="#64748b">Per-Component Pipeline (asyncio.gather)</text>
+
+  <!-- Stage 2: Plan gen -->
+  <rect x="505" y="125" width="75" height="28" rx="6" fill="url(#g2)"/>
+  <text x="542" y="143" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">Plan Gen</text>
+  <path d="M580,139 L595,139" stroke="#3b82f6" stroke-width="1.5"/>
+
+  <!-- Stage 3: Exec results -->
+  <rect x="598" y="125" width="75" height="28" rx="6" fill="url(#g1)"/>
+  <text x="635" y="143" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">Exec Plan</text>
+  <path d="M673,139 L688,139" stroke="#6366f1" stroke-width="1.5"/>
+
+  <!-- Stage 4: Story -->
+  <rect x="691" y="125" width="75" height="28" rx="6" fill="url(#g2)"/>
+  <text x="728" y="143" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">Narrative</text>
+  <path d="M766,139 L781,139" stroke="#3b82f6" stroke-width="1.5"/>
+
+  <!-- Stage 5: Topo delta -->
+  <rect x="784" y="120" width="75" height="38" rx="6" fill="url(#g3)"/>
+  <text x="821" y="137" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">TopoΔ</text>
+  <text x="821" y="151" text-anchor="middle" font-size="8" fill="#d1fae5">(+retry)</text>
+  <path d="M859,139 L874,139" stroke="#10b981" stroke-width="1.5"/>
+
+  <!-- Stage 6: Validate -->
+  <rect x="877" y="120" width="75" height="38" rx="6" fill="url(#g4)"/>
+  <text x="914" y="137" text-anchor="middle" font-size="9" fill="#fff" font-weight="700">Validate</text>
+  <text x="914" y="151" text-anchor="middle" font-size="8" fill="#fef3c7">2-layer</text>
+  <path d="M952,139 L967,139" stroke="#f59e0b" stroke-width="1.5"/>
+
+  <!-- Stage 7: Project -->
+  <rect x="970" y="125" width="55" height="28" rx="6" fill="url(#g5)"/>
+  <text x="997" y="143" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">AttrΔ</text>
+
+  <!-- Retry arrow -->
+  <path d="M859,158 L859,180 L821,180 L821,158" stroke="#10b981" stroke-width="1" fill="none" stroke-dasharray="3,2"/>
+  <text x="840" y="192" text-anchor="middle" font-size="8" fill="#10b981">retry path</text>
+
+  <!-- Merge -->
+  <rect x="505" y="210" width="520" height="36" rx="8" fill="#475569" filter="url(#shadow)"/>
+  <text x="765" y="233" text-anchor="middle" font-size="12" fill="#fff" font-weight="700">Merge Component Results → Single ExecResult List</text>
+
+  <path d="M540,246 L540,270 L305,270 L305,135" stroke="#94a3b8" stroke-width="1.5" fill="none" stroke-dasharray="4,2"/>
+  <path d="M990,246 L990,270 L305,270" stroke="#94a3b8" stroke-width="1.5" fill="none" stroke-dasharray="4,2"/>
+
+  <!-- ====== ARCHITECTURE LAYERS (bottom) ====== -->
+  <text x="550" y="450" text-anchor="middle" font-size="14" font-weight="700" fill="#1e293b">Architecture Layers</text>
+
+  <!-- Config -->
+  <rect x="40" y="470" width="180" height="80" rx="6" fill="#f0f9ff" stroke="#7dd3fc" stroke-width="1"/>
+  <text x="130" y="490" text-anchor="middle" font-size="11" font-weight="600" fill="#0369a1">Config Layer</text>
+  <text x="50" y="505" font-size="10" fill="#475569">· node_config.json (types)</text>
+  <text x="50" y="520" font-size="10" fill="#475569">· domain.json (semantic rules)</text>
+  <text x="50" y="535" font-size="10" fill="#475569">· graph_rules.md (prompts)</text>
+
+  <!-- Adapter -->
+  <rect x="250" y="470" width="180" height="80" rx="6" fill="#fefce8" stroke="#fde047" stroke-width="1"/>
+  <text x="340" y="490" text-anchor="middle" font-size="11" font-weight="600" fill="#a16207">Translation Layer</text>
+  <text x="260" y="505" font-size="10" fill="#475569">· graph_adapter.py</text>
+  <text x="260" y="520" font-size="10" fill="#475569">· domain → graph translation</text>
+  <text x="260" y="535" font-size="10" fill="#475569">· entity registration</text>
+
+  <!-- Prompts -->
+  <rect x="460" y="470" width="180" height="80" rx="6" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="550" y="490" text-anchor="middle" font-size="11" font-weight="600" fill="#15803d">Prompt Layer</text>
+  <text x="470" y="505" font-size="10" fill="#475569">· post_processor.py</text>
+  <text x="470" y="520" font-size="10" fill="#475569">· semantic slot construction</text>
+  <text x="470" y="535" font-size="10" fill="#475569">· LLM interaction</text>
+
+  <!-- Validation -->
+  <rect x="670" y="470" width="180" height="80" rx="6" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
+  <text x="760" y="490" text-anchor="middle" font-size="11" font-weight="600" fill="#b91c1c">Validation Layer</text>
+  <text x="680" y="505" font-size="10" fill="#475569">· verification_layer.py</text>
+  <text x="680" y="520" font-size="10" fill="#475569">· conservation checks</text>
+  <text x="680" y="535" font-size="10" fill="#475569">· entity constraints</text>
+
+  <!-- Database -->
+  <rect x="880" y="470" width="180" height="80" rx="6" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1"/>
+  <text x="970" y="490" text-anchor="middle" font-size="11" font-weight="600" fill="#6d28d9">Persistence</text>
+  <text x="890" y="505" font-size="10" fill="#475569">· SQLite (entity table)</text>
+  <text x="890" y="520" font-size="10" fill="#475569">· edge table</text>
+  <text x="890" y="535" font-size="10" fill="#475569">· attribute table</text>
+
+  <!-- Guard layer -->
+  <rect x="40" y="570" width="1020" height="45" rx="8" fill="#1e293b" filter="url(#shadow)"/>
+  <text x="550" y="598" text-anchor="middle" font-size="13" fill="#e2e8f0" font-weight="700">Guards: Conservation · Entity Existence · Capacity (max_nodes) · Type Invariants</text>
+
+  <!-- Data flow arrow -->
+  <text x="120" y="625" text-anchor="middle" font-size="11" fill="#64748b" font-weight="600">Data Flow</text>
+  <path d="M40,640 L1060,640" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="80" y="656" font-size="10" fill="#94a3b8">graph → split → per-comp pipeline → merge → graph↺</text>
+
+  <!-- Legend -->
+  <text x="680" y="656" font-size="10" fill="#64748b">🔵 Plan Stage  🔴 Topology  🟡 Validation  🟢 AttrΔ</text>
+</svg>

@@ -112,6 +112,30 @@ class GraphEngine:
         return None
 
     # ═══════════════════════════════════════════
+    # 类型上限控制
+    # ═══════════════════════════════════════════
+
+    def _count_entities_by_type(self, type_id: int) -> int:
+        """统计图中某类型的实体数量"""
+        return sum(1 for eid in self._entities if prefix_to_type_id(eid) == type_id)
+
+    def _can_register_new(self, eid: str) -> bool:
+        """检查是否允许注册新实体（per-type max_nodes）"""
+        tid = prefix_to_type_id(eid)
+        if tid == 0:
+            return True  # 未知类型不限制
+        max_n = get_type_def(tid).get("max_nodes", None)
+        if max_n is None:
+            return True  # 未配置则不限制
+        current = self._count_entities_by_type(tid)
+        if current >= max_n:
+            logger.warning(
+                f"[Graph] 类型 {tid} 已达上限 ({current}/{max_n})，拒绝注册: {eid}"
+            )
+            return False
+        return True
+
+    # ═══════════════════════════════════════════
     # 边管理（纯拓扑）
     # ═══════════════════════════════════════════
 
@@ -120,18 +144,33 @@ class GraphEngine:
         创建一条边：src → tgt。
 
         如果边已存在，更新 quantity 并激活。
-        如果实体不存在，自动注册占位实体。
+        如果实体不存在，自动注册占位实体（受 per-type max_nodes 上限控制）。
         自动建立 Entity 级别的连接。
         """
-        # 自动注册占位
+        # 自动注册占位（检查 per-type 上限）
         for eid in (src_eid, tgt_eid):
             if eid not in self._entities:
+                if not self._can_register_new(eid):
+                    # 返回一个虚拟边，表示操作被跳过
+                    from ..models.interaction import InteractionEdge
+                    return InteractionEdge(
+                        edge_id=f"e_{uuid.uuid4().hex[:12]}",
+                        source_entity_id=src_eid,
+                        target_entity_id=tgt_eid,
+                        quantity=0,
+                        is_active=False,
+                    )
                 name = _extract_name_from_eid(eid)
                 ent = Entity(entity_id=eid, name=name, entity_type=_infer_type(eid))
                 # 物品类实体默认标记为守恒量
                 ent.conserved = _is_item_type(eid)
                 self._entities[eid] = ent
-                logger.info(f"[Graph] 自动注册占位实体: {eid} ({name}) conserved={ent.conserved}")
+                tid = prefix_to_type_id(eid)
+                count_now = self._count_entities_by_type(tid)
+                max_n = get_type_def(tid).get("max_nodes", None)
+                logger.info(f"[Graph] 自动注册占位实体: {eid} ({name}) "
+                             f"conserved={ent.conserved} "
+                             f"(类型{tid}: {count_now}/{max_n or '∞'})")
 
         # 已有边 → 更新 qty
         existing = self._edge_by_pair.get((src_eid, tgt_eid))
@@ -234,8 +273,8 @@ class GraphEngine:
         if not edge:
             # 自动创建边（用于 0→正值 的首次转移）
             if delta > 0:
-                self.connect(src_eid, tgt_eid, delta)
-                return True
+                result = self.connect(src_eid, tgt_eid, delta)
+                return result.is_active
             logger.warning(f"[Graph] modify_qty: 边不存在 {src_eid}→{tgt_eid}, delta={delta}")
             return False
         new_qty = edge.quantity + delta
@@ -455,8 +494,12 @@ class GraphEngine:
             try:
                 if op_type == "connect":
                     qty = op.get("qty", 0)
-                    self.connect(src, tgt, qty)
-                    results.append({"op": "connect", "src": src, "tgt": tgt, "qty": qty, "status": "ok"})
+                    edge = self.connect(src, tgt, qty)
+                    if edge.is_active:
+                        results.append({"op": "connect", "src": src, "tgt": tgt, "qty": qty, "status": "ok"})
+                    else:
+                        results.append({"op": "connect", "src": src, "tgt": tgt, "qty": qty, "status": "skipped", "reason": "超出新增实体上限"})
+                        status = "partial"
 
                 elif op_type == "disconnect":
                     ok = self.disconnect(src, tgt)

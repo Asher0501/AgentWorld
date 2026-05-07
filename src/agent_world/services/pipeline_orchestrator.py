@@ -113,8 +113,10 @@ class PipelineOrchestrator:
         tick_duration_str: str = "",
     ) -> list[dict]:
         """
-        执行完整管线 tick（LLM #1 → #2 → IntentExecutor → 分量分割 →
-            每分量: #3 → #4a → #5 → 归并 → 执行）。
+        执行完整管线 tick（分量分割 → 每分量: LLM #1 → #3 → #4a → #5 → 归并）。
+
+        分量分割在 LLM #1 之前，因为 LLM #1 不改变拓扑结构。
+        每个分量从其 npc_eids 出发，只生成分量内 NPC 的计划。
 
         Args:
             npcs: DB NPC 模型列表
@@ -131,27 +133,20 @@ class PipelineOrchestrator:
         if not self.llm_available or not self.resolver:
             raise RuntimeError("LLM 不可用")
 
-        # Step 1: LLM #1 — 计划生成（不变，per-NPC 并发）
-        await self._run_stage_plan(npcs, ctx)
-        if not ctx.plan_map:
-            return []
-        logger.info(f"[LLM #1] {len(ctx.plan_map)} 个 NPC 的计划已生成")
+        # Step 1: 连通分量分割（前置，仅依赖图拓扑）
+        ctx.components = self._build_components(ctx)
 
-        # Step 2-3: 跳过 LLM #2（拓扑结构变更由 LLM #4a 全权处理）
-        # 直接从当前图状态生成 exec_results 供故事生成使用
-        ctx.exec_results = self._exec_results_from_graph(ctx)
-
-        # Step 4: 连通分量分割（新增）
-        ctx.components = self._split_components(ctx)
-
-        # Step 5: 全分量 LLM #3 → #4a → #5（并行）
-        tasks = [self._run_one_component(ctx, comp) for comp in ctx.components]
+        # Step 2: 每分量全管线（LLM #1 → exec_results → #3 → #4a → #5）
+        tasks = [self._run_component_full(ctx, comp, npcs) for comp in ctx.components]
         await asyncio.gather(*tasks)
 
-        # Step 6: 归并并执行最终操作
+        if not ctx.plan_map:
+            return []
+
+        # Step 3: 归并
         self._merge_commit_components(ctx)
 
-        # Step 7: 构建返回结果
+        # Step 4: 构建返回结果
         ctx.tick_results = self._build_tick_results(ctx)
         logger.info(f"[Orchestrator] 完成，{len(ctx.tick_results)} 条结果 | "
                      f"状态: {ctx.snapshot()}")
@@ -161,8 +156,102 @@ class PipelineOrchestrator:
     # Step 1: LLM #1 — per-NPC 计划生成
     # ═══════════════════════════════════════════
 
-    async def _run_stage_plan(self, npcs: list, ctx: PipelineContext) -> None:
-        """per-NPC 并发计划生成，填充 ctx.plan_map 和 ctx.npc_info。"""
+    # ═══════════════════════════════════════════
+
+    def _exec_result_dict(self, info, neid, zone, plan, interacted, ent):
+        attrs = ent.attributes if ent else {}
+        traits = ent.traits if ent and hasattr(ent, 'traits') else []
+        model = info.get("model")
+        mem_text = model.attributes.get("_recent_info", "") if model and hasattr(model, 'attributes') else ""
+
+        interacted_npcs = [n for n in interacted
+                           if self.graph_engine.get_entity(f"npc_{n[:8]}") is not None]
+        interacted_objects = [n for n in interacted
+                              if self.graph_engine.get_entity(f"object_{n[:8]}") is not None]
+
+        return {
+            "npc_name": info["name"],
+            "npc_eid": neid,
+            "npc_role": info["entity"].role if info.get("entity") else "?",
+            "npc_id": info["model"].id if info.get("model") else "",
+            "zone_after": zone,
+            "zone_changed": False,
+            "interacted_npcs": interacted_npcs,
+            "interacted_objects": interacted_objects,
+            "raw_intent": plan,
+            "narrative": "",
+            "memories": mem_text,
+            "mood_text": self._val_text(attrs.get("mood"), _MOOD),
+            "satiety_text": self._val_text(attrs.get("satiety"), _SAT),
+            "vitality_text": self._val_text(attrs.get("vitality"), _VIT),
+            "traits": traits,
+        }
+
+    def _find_zone(self, ent) -> str:
+        if not ent:
+            return "?"
+        for conn in ent.connected_entity_ids:
+            e = self.graph_engine.get_entity(conn)
+            if e and has_role(e.type_id, "region"):
+                return e.name
+        return "?"
+
+    # ═══════════════════════════════════════════
+
+    async def _stage_narrative_component(
+        self, ctx: PipelineContext, comp: TopoComponent
+    ) -> list[str]:
+        """
+        为单个分量生成故事。只处理该分量的 exec_results。
+        InteractionLayer.process 已改为 async，直接 await 不阻塞。
+        """
+        if not comp.exec_results:
+            return []
+        edge_results = await self._il.process(
+            [er for er in comp.exec_results],
+            graph_engine=self.graph_engine,
+            world_time_str=ctx.world_time_str,
+            tick_duration_str=ctx.tick_duration_str,
+        )
+        stories = list(dict.fromkeys(e.description for e in edge_results))
+        logger.info(f"[分量 {comp.id}] LLM #3: {len(edge_results)} 条边 → "
+                     f"{len(stories)} 个唯一故事")
+        return stories
+
+    # ═══════════════════════════════════════════
+    # Step 4.5: 连通分量分割
+    # ═══════════════════════════════════════════
+
+    def _build_components(self, ctx: PipelineContext) -> list[TopoComponent]:
+        """
+        基于当前图拓扑构建连通分量（前置，不依赖 plan/exec_results）。
+        """
+        components = self.graph_engine.build_components()
+        # 移除不含 NPC 的空分量
+        active = [c for c in components if c.npc_eids]
+        for i, c in enumerate(active):
+            c.id = i
+        logger.info(f"[分量] {len(active)} 个活跃分量")
+        return active
+
+    def _assign_exec_results_to_component(
+        self, comp: TopoComponent, neid: str, er: dict
+    ):
+        """将单个 exec_result 归入分量（供分量内调用）。"""
+        if neid in comp.npc_eids:
+            comp.exec_results.append(er)
+
+    # ═══════════════════════════════════════════
+    # Step 2.1: 分量级 LLM #1 — 计划生成
+    # ═══════════════════════════════════════════
+
+    async def _run_stage_plan_for_component(
+        self, comp: TopoComponent, npcs: list, ctx: PipelineContext
+    ) -> None:
+        """
+        为单个分量的 NPC 并行生成计划。
+        只处理 neid ∈ comp.npc_eids 的 NPC。
+        """
         from .graph_adapter import _make_eid
         from .prompt_assembler import assemble
         PLAN_TIMEOUT = 300.0
@@ -171,6 +260,9 @@ class PipelineOrchestrator:
 
         for npc in npcs:
             neid = _make_eid("npc", npc.name)
+            if neid not in comp.npc_eids:
+                continue
+
             ent = self.graph_engine.get_entity(neid)
             if not ent:
                 continue
@@ -235,153 +327,45 @@ class PipelineOrchestrator:
                 ctx.plan_map[neid] = f"我在{zone_name}看看有什么可以做的。"
 
     # ═══════════════════════════════════════════
-    # Step 2: LLM #2
+    # Step 2.2: 完整分量管线
     # ═══════════════════════════════════════════
 
-    async def _stage_topo_structure(self, ctx: PipelineContext):
-        self.adapter.set_graph_engine(self.graph_engine)
-        # 构建 entity_id 恒等映射（标签 = entity_id）
-        id_map = {e.entity_id: e.entity_id for e in self.graph_engine.all_entities()}
-        kw = dict(
-            npc_plans=ctx.plan_map,
-            graph_engine=self.graph_engine,
-            world_time_str=ctx.world_time_str,
-            tick_duration_str=ctx.tick_duration_str,
-            global_label_map=id_map,
-            count=len(ctx.plan_map),
-        )
-        result = await self._engine.run_stage("topo_structure", kw, label_map=id_map)
-        ctx.topo_structure_ops = result.ops
-        logger.info(f"[LLM #2] {len(ctx.topo_structure_ops)} 个拓扑结构操作")
+    async def _run_component_full(
+        self, ctx: PipelineContext, comp: TopoComponent, npcs: list
+    ):
+        """
+        单个分量的全流程：LLM #1（计划）→ exec_results → LLM #3 → LLM #4a → LLM #5。
+        """
+        # LLM #1 — 只针对本分量 NPC
+        await self._run_stage_plan_for_component(comp, npcs, ctx)
 
-    # ═══════════════════════════════════════════
-    # Step 3: IntentExecutor
-    # ═══════════════════════════════════════════
+        # 如果分量内所有 NPC 都没生成计划，跳过
+        comp_plan_map = {eid: ctx.plan_map[eid] for eid in comp.npc_eids if eid in ctx.plan_map}
+        if not comp_plan_map:
+            return
 
-    def _exec_results_from_graph(self, ctx: PipelineContext) -> list[dict]:
-        """根据当前图状态生成 exec_results（跳过 LLM #2，NPC 区域关系由 LLM #4a 维护）。"""
-        results = []
-        for neid, plan in ctx.plan_map.items():
+        # 生成 exec_results（分量内 NPC 专属）
+        for neid in comp.npc_eids:
+            if neid not in ctx.plan_map:
+                continue
             info = ctx.npc_info.get(neid)
             if not info:
                 continue
             ent = info["entity"]
             zone_name = self._find_zone(ent)
-            results.append(self._exec_result_dict(
-                info, neid, zone_name, plan, [], ent,
-            ))
-        return results
+            er = self._exec_result_dict(
+                info, neid, zone_name, ctx.plan_map[neid], [], ent,
+            )
+            comp.exec_results.append(er)
 
-    def _exec_result_dict(self, info, neid, zone, plan, interacted, ent):
-        attrs = ent.attributes if ent else {}
-        traits = ent.traits if ent and hasattr(ent, 'traits') else []
-        model = info.get("model")
-        mem_text = model.attributes.get("_recent_info", "") if model and hasattr(model, 'attributes') else ""
-
-        interacted_npcs = [n for n in interacted
-                           if self.graph_engine.get_entity(f"npc_{n[:8]}") is not None]
-        interacted_objects = [n for n in interacted
-                              if self.graph_engine.get_entity(f"object_{n[:8]}") is not None]
-
-        return {
-            "npc_name": info["name"],
-            "npc_eid": neid,
-            "npc_role": info["entity"].role if info.get("entity") else "?",
-            "npc_id": info["model"].id if info.get("model") else "",
-            "zone_after": zone,
-            "zone_changed": False,
-            "interacted_npcs": interacted_npcs,
-            "interacted_objects": interacted_objects,
-            "raw_intent": plan,
-            "narrative": "",
-            "memories": mem_text,
-            "mood_text": self._val_text(attrs.get("mood"), _MOOD),
-            "satiety_text": self._val_text(attrs.get("satiety"), _SAT),
-            "vitality_text": self._val_text(attrs.get("vitality"), _VIT),
-            "traits": traits,
-        }
-
-    def _find_zone(self, ent) -> str:
-        if not ent:
-            return "?"
-        for conn in ent.connected_entity_ids:
-            e = self.graph_engine.get_entity(conn)
-            if e and has_role(e.type_id, "region"):
-                return e.name
-        return "?"
-
-    def _collect_interacted(self, ops: list[dict], self_eid: str) -> list[str]:
-        names = []
-        for op in ops:
-            tgt = op.get("tgt", "")
-            if tgt == self_eid:
-                continue
-            te = self.graph_engine.get_entity(tgt)
-            if te and (has_role(te.type_id, "actor")
-                       or has_role(te.type_id, "fixture")):
-                names.append(te.name)
-        return names
-
-    # ═══════════════════════════════════════════
-    # Step 4: LLM #3
-    # ═══════════════════════════════════════════
-
-    async def _stage_narrative_component(
-        self, ctx: PipelineContext, comp: TopoComponent
-    ) -> list[str]:
-        """
-        为单个分量生成故事。只处理该分量的 exec_results。
-        InteractionLayer.process 已改为 async，直接 await 不阻塞。
-        """
         if not comp.exec_results:
-            return []
-        edge_results = await self._il.process(
-            [er for er in comp.exec_results],
-            graph_engine=self.graph_engine,
-            world_time_str=ctx.world_time_str,
-            tick_duration_str=ctx.tick_duration_str,
-        )
-        stories = list(dict.fromkeys(e.description for e in edge_results))
-        logger.info(f"[分量 {comp.id}] LLM #3: {len(edge_results)} 条边 → "
-                     f"{len(stories)} 个唯一故事")
-        return stories
+            return
+
+        # LLM #3 → LLM #4a → LLM #4b （沿用现有 _run_one_component 逻辑）
+        await self._run_one_component(ctx, comp)
 
     # ═══════════════════════════════════════════
-    # Step 4.5: 连通分量分割
-    # ═══════════════════════════════════════════
-
-    def _split_components(self, ctx: PipelineContext) -> list[TopoComponent]:
-        """
-        将 exec_results 按拓扑连通分量切分。
-        """
-        components = self.graph_engine.build_components()
-
-        # 把 exec_results 按 NPC 归属分配到各分量
-        npc_to_comp: dict[str, TopoComponent] = {}
-        for comp in components:
-            for neid in comp.npc_eids:
-                npc_to_comp[neid] = comp
-
-        for er in ctx.exec_results:
-            neid = er.get("npc_eid", "")
-            comp = npc_to_comp.get(neid)
-            if comp is not None:
-                comp.exec_results.append(er)
-            else:
-                # NPC 不在任何分量（理论上不应发生）→ 归入分量 0
-                if components:
-                    components[0].exec_results.append(er)
-
-        # 移除空分量（无交互结果）
-        active = [c for c in components if c.exec_results or c.npc_eids]
-        # 重置 id
-        for i, c in enumerate(active):
-            c.id = i
-        logger.info(f"[分量] {len(active)} 个活跃分量")
-        return active
-
-    # ═══════════════════════════════════════════
-    # Step 4.6: 单分量管线
+    # Step 4.6: 单分量管线（#3 → #4a → #5）
     # ═══════════════════════════════════════════
 
     async def _run_one_component(self, ctx: PipelineContext, comp: TopoComponent):
@@ -532,6 +516,8 @@ class PipelineOrchestrator:
             ctx.attr_ops.extend(comp.attr_ops or [])
             ctx.recent_info_map.update(comp.recent_info or {})
             ctx.stories.extend(comp.stories or [])
+            # 归并 exec_results 供 _build_tick_results 使用
+            ctx.exec_results.extend(comp.exec_results or [])
 
         logger.info(f"[归并] {len(ctx.components)} 个分量合并: "
                      f"{len(ctx.attr_ops)} attr ops, "
