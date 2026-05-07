@@ -135,6 +135,16 @@ class GraphEngine:
             return False
         return True
 
+    def _should_disconnect_on_zero(self, tgt_eid: str) -> bool:
+        """检查指向目标节点的边在 qty=0 时是否自动断开"""
+        ent = self._entities.get(tgt_eid)
+        if not ent:
+            return False
+        tdef = get_type_def(ent.type_id)
+        if not tdef:
+            return False
+        return tdef.get("disconnect_on_zero_edge", False)
+
     # ═══════════════════════════════════════════
     # 边管理（纯拓扑）
     # ═══════════════════════════════════════════
@@ -180,6 +190,21 @@ class GraphEngine:
             return existing
 
         # 新建边
+        # 如果目标节点声明了 disconnect_on_zero_edge，qty=0 时不建边
+        if qty == 0 and self._should_disconnect_on_zero(tgt_eid):
+            logger.info(
+                f"[Graph] 跳过建边: {src_eid}─▸{tgt_eid} (qty=0, "
+                f"目标节点类型设置了 disconnect_on_zero_edge)"
+            )
+            from ..models.interaction import InteractionEdge
+            return InteractionEdge(
+                edge_id=f"e_{uuid.uuid4().hex[:12]}",
+                source_entity_id=src_eid,
+                target_entity_id=tgt_eid,
+                quantity=0,
+                is_active=False,
+            )
+
         from ..models.interaction import InteractionEdge
         edge = InteractionEdge(
             edge_id=f"e_{uuid.uuid4().hex[:12]}",
@@ -285,7 +310,8 @@ class GraphEngine:
             )
             new_qty = 0
         edge.quantity = new_qty
-        if new_qty == 0:
+        # 目标节点声明了 disconnect_on_zero_edge → qty=0 时自动断边
+        if new_qty == 0 and self._should_disconnect_on_zero(tgt_eid):
             self.disconnect(src_eid, tgt_eid)
         logger.debug(f"[Graph] modify_qty: {src_eid}→{tgt_eid} {delta:+d} → {new_qty}")
         return True

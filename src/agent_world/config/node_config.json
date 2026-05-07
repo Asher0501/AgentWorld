@@ -100,6 +100,7 @@
       "id": "npc",
       "prefix": "npc_",
       "max_nodes": 15,
+      "disconnect_on_zero_edge": false,
       "comment": "角色节点 — BFS 全展开",
       "roles": [
         "actor"
@@ -131,6 +132,7 @@
       "id": "zone",
       "prefix": "zone_",
       "max_nodes": 10,
+      "disconnect_on_zero_edge": true,
       "comment": "区域节点 — 同类型阻断（zone↔zone不通）",
       "roles": [
         "region",
@@ -155,6 +157,7 @@
       "id": "item",
       "prefix": "item_",
       "max_nodes": 15,
+      "disconnect_on_zero_edge": false,
       "comment": "物品节点 — BFS 叶子节点",
       "roles": [
         "thing",
@@ -175,6 +178,7 @@
       "id": "object",
       "prefix": "obj_",
       "max_nodes": 10,
+      "disconnect_on_zero_edge": true,
       "comment": "物件节点 — BFS 叶子节点，不支持 recent_info",
       "roles": [
         "fixture"
