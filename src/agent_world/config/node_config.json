@@ -45,6 +45,7 @@
       "year": 1272
     },
     "allow_unregistered_entity": true,
+    "entity_semantic_match": true,
     "zone_connections": [
       {
         "from": "white_orchard",

@@ -48,8 +48,13 @@ def _strip_known_prefix(name: str) -> str:
 def _find_similar_entity(name: str, graph) -> str | None:
     """
     用 LLM 判断新实体名是否语义等价于图中已有实体。
+    受 world.entity_semantic_match 开关控制。
     返回 matched entity_id 或 None。
     """
+    from ...config.config_loader import get_world_config
+    if not get_world_config("entity_semantic_match", True):
+        return None
+
     clean = _strip_known_prefix(name.replace("{", "").replace("}", "").strip())
     if not clean:
         return None
