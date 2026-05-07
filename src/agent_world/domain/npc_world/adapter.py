@@ -64,11 +64,23 @@ def _find_similar_entity(name: str, graph) -> str | None:
     if cached is not None:
         return cached if cached else None
 
-    # 收集已有实体名（跳过 NPC）
-    candidates = []
+    # 收集已有实体（跳过 NPC）
+    candidates: list[tuple[str, str]] = []
+    npc_zones: dict[str, str] = {}
     for eid, ent in graph.entities.items():
         raw_name = ent.name if hasattr(ent, 'name') else ent.entity_id
-        if not raw_name or eid.startswith("npc_"):
+        if not raw_name:
+            continue
+        if eid.startswith("npc_"):
+            # 记录 NPC→zone 映射（用于 LLM 上下文）
+            zone = None
+            if hasattr(ent, "attributes") and ent.attributes:
+                if isinstance(ent.attributes, dict):
+                    zone = ent.attributes.get("zone_name")
+                else:
+                    zone = getattr(ent.attributes, "zone_name", None)
+            display = _strip_known_prefix(str(raw_name))
+            npc_zones[display] = str(zone) if zone else "?"
             continue
         display = _strip_known_prefix(str(raw_name))
         candidates.append((eid, display))
@@ -77,18 +89,34 @@ def _find_similar_entity(name: str, graph) -> str | None:
         _SEMANTIC_MATCH_CACHE[clean] = ""
         return None
 
-    # LLM 调用
+    # 构建带 NPC→区域上下文的 prompt
     candidate_text = "\n".join(f"- {eid}: {display}" for eid, display in candidates)
+    npc_section = "\n".join(f"- {name}: 常驻 {zone}" for name, zone in sorted(npc_zones.items())) if npc_zones else "(无)"
+
+    examples = """
+示例：
+新实体名=「酒馆」 → 已有 zone_狐狸与鹅酒馆 → 语义等价，输出 zone_狐狸与鹅酒馆
+新实体名=「酒馆厕所」 → 包含在 zone_狐狸与鹅酒馆内 → 输出 zone_狐狸与鹅酒馆
+新实体名=「特丽丝的家」 → 特丽丝常驻奥森弗特，家即在奥森弗特内 → 输出 zone_奥森弗特
+新实体名=「诺维格瑞广场」 → 是诺维格瑞的一部分 → 输出 zone_诺维格瑞
+新实体名=「奥森弗特后巷」 → 是奥森弗特的一部分 → 输出 zone_奥森弗特
+"""
+
     prompt = (
-        f"判断一个实体名是否语义上等价于另一个已有实体（即指代同一事物/地点）。\n\n"
-        f"已有实体：\n{candidate_text}\n\n"
-        f"新实体名：「{clean}」\n\n"
-        f"新实体名「{clean}」语义上等价于上面某个已有实体吗？\n"
-        f"如果等价，只输出该实体的 entity_id（如 zone_狐狸与鹅酒馆）。\n"
-        f"如果不等价或不确定，只输出「无」。\n"
-        f"只输出一行，不要解释。"
+        f"判断一个实体名是否指向已有实体——可能是同一事物、"
+        f"是某个已有实体的内部组成/子区域，或是某 NPC 常驻区域的具体位置。\n\n"
+        f"==== 已有实体 ====\n{candidate_text}\n\n"
+        f"==== NPC 所在区域 ====\n{npc_section}\n\n"
+        f"{examples}"
+        f"==== 判断 ====\n新实体名：「{clean}」\n"
+        f"该新实体名是否等价于/包含在/属于上述某个已有实体？\n"
+        f"- 如果等价（同一事物），输出该 entity_id\n"
+        f"- 如果属于/包含在某个已有实体中（如在酒馆内/是该区域一部分），也输出该 entity_id\n"
+        f"- 如果是某 NPC 的住所/店面/工坊，且该 NPC 有常驻区域，输出区域 entity_id\n"
+        f"- 如果完全不匹配，输出「无」\n"
+        f"只输出一行 entity_id 或「无」，不要解释。"
     )
-    system_prompt = "你是一个精确的实体名称匹配器。只输出 entity_id 或「无」，不要多余文字。"
+    system_prompt = "你是一个精确的实体名称匹配器。输出 entity_id 或「无」。"
 
     try:
         from ...services.interaction_resolver import InteractionResolver
