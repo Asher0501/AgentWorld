@@ -7,11 +7,9 @@ NPCWorldAdapter — NPC/Agent 世界的域适配器实现。
 from __future__ import annotations
 import json
 import logging
-import math
 import os
 import re as _re
 from typing import Any, Optional
-from collections import Counter
 
 from ..adapter import (
     DomainAdapter,
@@ -25,68 +23,94 @@ from ..adapter import (
     StateChange,
 )
 
-
-# ── 实体名模糊匹配（内积向量相似度）──
-# 在 auto-register 新实体前检查是否与已有实体名高度相似
-SIMILARITY_THRESHOLD = 0.48  # 内积阈值，高于此值判定为同一实体
-
-
-def _name_to_ngram_vec(name: str) -> dict[str, float]:
-    """将实体名转为字符 n-gram 向量（2-gram + 3-gram 联合）。"""
-    padded = f"__{name}__"
-    c = Counter()
-    for i in range(len(padded) - 1):
-        c[padded[i:i+2]] += 1  # 2-gram
-    for i in range(len(padded) - 2):
-        c[padded[i:i+3]] += 1  # 3-gram
-    # L2 normalize
-    norm = math.sqrt(sum(v * v for v in c.values()))
-    if norm == 0:
-        return {}
-    return {k: v / norm for k, v in c.items()}
+# ── 实体名语义匹配缓存（LLM 驱动）──
+# 每次 LLM 调用时缓存，同一 tick 内不重复调用
+_SEMANTIC_MATCH_CACHE: dict[str, str | None] = {}
+logger = logging.getLogger("NPCWorldAdapter")
 
 
-def _entity_name_similarity(name_a: str, name_b: str) -> float:
-    """两个实体名的内积相似度。"""
-    va = _name_to_ngram_vec(name_a)
-    vb = _name_to_ngram_vec(name_b)
-    # 取较短向量的维度做内积
-    shorter, longer = (va, vb) if len(va) <= len(vb) else (vb, va)
-    dot = 0.0
-    for k, v in shorter.items():
-        if k in longer:
-            dot += v * longer[k]
-    return dot
+# ── 实体名语义匹配（LLM 驱动）──
+# 在 auto-register 前用 LLM 判断新实体是否语义等价于已有实体
 
 
-def _strip_prefix(name: str) -> str:
-    """去掉 zone_ / item_ / npc_ 等前缀用于语义对比。"""
+def _clear_entity_name_cache() -> None:
+    """清除语义匹配缓存。每次 tick 开始前调用。"""
+    _SEMANTIC_MATCH_CACHE.clear()
+
+
+def _strip_known_prefix(name: str) -> str:
     for pfx in ("zone_", "item_", "npc_", "object_"):
         if name.startswith(pfx):
             return name[len(pfx):]
     return name
 
 
-def _find_similar_entity(name: str, graph, threshold: float = SIMILARITY_THRESHOLD) -> str | None:
-    """在图中查找与 name 最相似的已有实体 ID。高于 threshold 返回 match，否则 None。"""
-    clean = _strip_prefix(name.replace("{", "").replace("}", "").strip())
-    best_score = 0.0
-    best_id = None
-    try:
-        for eid, ent in graph.entities.items():
-            raw_name = ent.name if hasattr(ent, 'name') else ent.entity_id
-            if not raw_name:
-                continue
-            ent_clean = _strip_prefix(str(raw_name))
-            score = _entity_name_similarity(clean, ent_clean)
-            if score > best_score:
-                best_score = score
-                best_id = eid
-    except (AttributeError, TypeError):
-        pass
-    return best_id if best_score >= threshold else None
+def _find_similar_entity(name: str, graph) -> str | None:
+    """
+    用 LLM 判断新实体名是否语义等价于图中已有实体。
+    返回 matched entity_id 或 None。
+    """
+    clean = _strip_known_prefix(name.replace("{", "").replace("}", "").strip())
+    if not clean:
+        return None
 
-logger = logging.getLogger("NPCWorldAdapter")
+    # 缓存检查
+    cached = _SEMANTIC_MATCH_CACHE.get(clean)
+    if cached is not None:
+        return cached if cached else None
+
+    # 收集已有实体名（跳过 NPC）
+    candidates = []
+    for eid, ent in graph.entities.items():
+        raw_name = ent.name if hasattr(ent, 'name') else ent.entity_id
+        if not raw_name or eid.startswith("npc_"):
+            continue
+        display = _strip_known_prefix(str(raw_name))
+        candidates.append((eid, display))
+
+    if not candidates:
+        _SEMANTIC_MATCH_CACHE[clean] = ""
+        return None
+
+    # LLM 调用
+    candidate_text = "\n".join(f"- {eid}: {display}" for eid, display in candidates)
+    prompt = (
+        f"判断一个实体名是否语义上等价于另一个已有实体（即指代同一事物/地点）。\n\n"
+        f"已有实体：\n{candidate_text}\n\n"
+        f"新实体名：「{clean}」\n\n"
+        f"新实体名「{clean}」语义上等价于上面某个已有实体吗？\n"
+        f"如果等价，只输出该实体的 entity_id（如 zone_狐狸与鹅酒馆）。\n"
+        f"如果不等价或不确定，只输出「无」。\n"
+        f"只输出一行，不要解释。"
+    )
+    system_prompt = "你是一个精确的实体名称匹配器。只输出 entity_id 或「无」，不要多余文字。"
+
+    try:
+        from ...services.interaction_resolver import InteractionResolver
+        resolver = InteractionResolver(temperature=0.1)
+        result = resolver.call_llm(prompt, system_prompt=system_prompt, temperature=0.1)
+        result = result.strip().strip('"').strip("'")
+        if result and result != "无":
+            # 验证结果是合法的 entity_id
+            valid_ids = {eid for eid, _ in candidates}
+            if result in valid_ids:
+                _SEMANTIC_MATCH_CACHE[clean] = result
+                logger.info(f"[Adapter] 语义匹配: {clean} → {result}")
+                return result
+            # 可能返回了显示名，用显示名反查
+            for eid, display in candidates:
+                if display == result:
+                    _SEMANTIC_MATCH_CACHE[clean] = eid
+                    logger.info(f"[Adapter] 语义匹配: {clean} → {eid} (by display name)")
+                    return eid
+            logger.info(f"[Adapter] 语义匹配返回无效 ID: {result}")
+        _SEMANTIC_MATCH_CACHE[clean] = ""
+        logger.info(f"[Adapter] 语义判断: {clean} → 无匹配")
+        return None
+    except Exception as e:
+        logger.warning(f"[Adapter] 语义匹配 LLM 调用失败: {e}")
+        _SEMANTIC_MATCH_CACHE[clean] = ""
+        return None
 
 _DOMAIN_PATH = os.path.join(os.path.dirname(__file__), "../../config/domain.json")
 
@@ -969,10 +993,6 @@ class NPCWorldAdapter(DomainAdapter):
                 return ent.entity_id
         if graph.get_entity(name):
             return name
-        # ★ 最后防线：字符 n-gram 模糊匹配
-        fuzzy = _find_similar_entity(name, graph)
-        if fuzzy:
-            return fuzzy
         return None
 
     def extract_json(self, text: str) -> str:
@@ -1085,6 +1105,8 @@ class NPCWorldAdapter(DomainAdapter):
         return stripped
 
     def _parse_topo_output(self, raw: str, graph, label_map: dict[str, str] | None = None) -> list[GraphOp]:
+        # 每次 tick 的拓扑处理开始时清除语义匹配缓存
+        _clear_entity_name_cache()
         from ...config.config_loader import get_world_config
         _allow_unreg = get_world_config("allow_unregistered_entity", False)
         raw = raw.strip()
@@ -1148,11 +1170,11 @@ class NPCWorldAdapter(DomainAdapter):
                     if existing:
                         real_item = existing.entity_id
                     else:
-                        # ★ 模糊匹配：检查新实体名是否与已有实体高度相似
+                        # ★ 语义匹配：用 LLM 判断新实体是否近似已有实体
                         similar = _find_similar_entity(item, graph)
                         if similar:
                             real_item = similar
-                            logger.info(f"[Adapter] fuzzy match: {eid} ~ {similar} (dot={_entity_name_similarity(item.replace('{','').replace('}','').strip(), graph.entities[similar].name if hasattr(graph.entities[similar],'name') else similar):.3f})")
+                            logger.info(f"[Adapter] 语义复用: {eid} → {similar} (跳过新建)")
                         else:
                             ent = Entity(entity_id=eid, name=item)
                             graph.register_entity(ent)
