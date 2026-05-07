@@ -31,6 +31,7 @@ def _make_npc_from_dict(d: dict) -> NPC:
             "strength": 10, "intelligence": 10,
             "charisma": 10, "endurance": 10, "wisdom": 10,
             "_recent_info": d.get("recent_info", "[]"),
+            "primary_goal": d.get("primary_goal", "暂无"),
         },
         physical=PhysicalAttributes(
             energy_capacity=physical_kw.get("energy_capacity", 100.0),

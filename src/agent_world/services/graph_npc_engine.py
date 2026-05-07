@@ -116,6 +116,21 @@ class GraphNPCEngine:
                         npc_db.create_npc(npc)
                     logger.info(f"增量同步: 新增 {len(new_npcs)} 个 NPC → DB ({', '.join(n.name for n in new_npcs)})")
 
+                # 迁移：补充现有 DB NPC 的 primary_goal（config 新增字段）
+                config_goal_map = {n.name: n.attributes.get("primary_goal", "暂无") for n in config_npcs}
+                patched = 0
+                for db_npc in existing:
+                    old_goal = db_npc.attributes.get("primary_goal") if isinstance(db_npc.attributes, dict) else None
+                    if old_goal is None or old_goal == "":
+                        goal = config_goal_map.get(db_npc.name, "暂无")
+                        if not isinstance(db_npc.attributes, dict):
+                            db_npc.attributes = {}
+                        db_npc.attributes["primary_goal"] = goal
+                        npc_db.update_npc(db_npc)
+                        patched += 1
+                if patched:
+                    logger.info(f"迁移: 为 {patched} 个 NPC 补充 primary_goal")
+
         self._world_initialized = True
 
     def _init_resolver(self):

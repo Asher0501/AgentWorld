@@ -240,8 +240,8 @@ class NPCWorldAdapter(DomainAdapter):
     PROMPT_TEMPLATES: dict[str, list[tuple[str, str]]] = {
         "llm1_plan": [
             ("time_info",            "runtime"),
-            ("survival_needs",       "content"),
             ("entity_identity",      "content"),
+            ("survival_needs",       "content"),
             ("personality",          "content"),
             ("recent_info",          "content"),
             ("inventory",            "content"),

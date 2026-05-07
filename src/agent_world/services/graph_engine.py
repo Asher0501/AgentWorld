@@ -185,6 +185,21 @@ class GraphEngine:
         # 已有边 → 更新 qty
         existing = self._edge_by_pair.get((src_eid, tgt_eid))
         if existing:
+            if qty == 0 and self._should_disconnect_on_zero(tgt_eid):
+                # 目标节点声明了 disconnect_on_zero_edge，qty=0 时断开
+                self.disconnect(src_eid, tgt_eid)
+                logger.info(
+                    f"[Graph] 断开已存在边: {src_eid}─▸{tgt_eid} "
+                    f"(qty=0, disconnect_on_zero_edge)"
+                )
+                from ..models.interaction import InteractionEdge
+                return InteractionEdge(
+                    edge_id=existing.edge_id,
+                    source_entity_id=src_eid,
+                    target_entity_id=tgt_eid,
+                    quantity=0,
+                    is_active=False,
+                )
             existing.quantity = qty
             existing.is_active = True
             return existing
