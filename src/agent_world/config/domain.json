@@ -252,6 +252,7 @@
     "inventory": "### 当前持有\n{items}\n\n",
     "inventory_empty": "### 当前持有\n空手\n\n",
     "zone_others": "### 当前区域还有\n{others}\n\n",
+    "zone_resources": "### 当前区域资源「{zone_name}」\n{resources}\n\n",
     "zone_connections": "### 可通过区域\n{connections}\n\n",
     "decision_guidance": "### 决策\n请为 {name} 决定下一步行动。\n用自然语言描述：你想做什么？在哪里做？有什么影响？为什么？\n不用输出 JSON，不用关心格式，直接说你想干嘛。\n\n格式示例：我叫{name}，我是{role}。我目前在{zone}，持有金币x8、魔药x2。\n我决定去炼金小屋找特莉丝买点魔药，顺便打听附近的水鬼巢穴。\n用第一人称说人话就行。\n",
     "system_role": {

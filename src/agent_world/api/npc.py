@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from ..db import NPCDB, get_session
+from ..db import NodeDB, get_session, node_to_npc, npc_to_node_dict
 from ..db.schemas import (
     NPCCreate, NPCUpdate, NPCResponse,
     SuccessResponse, ErrorResponse, ListResponse
@@ -36,10 +36,16 @@ def list_npcs(
 ):
     """列出 NPC，可按 zone_id 或 role 筛选"""
     with get_session() as conn:
-        db = NPCDB(conn)
-        npcs = db.list_npcs(zone_id=zone_id, role=role, limit=limit)
+        ndb = NodeDB(conn)
+        npc_nodes = ndb.get_nodes(type_filter="npc")
+        npcs = [node_to_npc(nd) for nd in npc_nodes if nd]
+        # 可选筛选
+        if zone_id:
+            npcs = [n for n in npcs if n.position.zone_id == zone_id]
+        if role:
+            npcs = [n for n in npcs if n.role == role]
         return ListResponse(
-            data=[npc.model_dump() for npc in npcs],
+            data=[n.model_dump() for n in npcs[:limit]],
             count=len(npcs)
         )
 
@@ -48,8 +54,11 @@ def list_npcs(
 def get_npc(npc_id: str):
     """获取单个 NPC"""
     with get_session() as conn:
-        db = NPCDB(conn)
-        npc = db.get_npc(npc_id)
+        ndb = NodeDB(conn)
+        nd = ndb.get_node(npc_id)
+        if not nd or nd["type"] != "npc":
+            raise HTTPException(status_code=404, detail="NPC not found")
+        npc = node_to_npc(nd)
         if not npc:
             raise HTTPException(status_code=404, detail="NPC not found")
         return NPCResponse(**npc.model_dump())
@@ -60,8 +69,12 @@ def create_npc(req: NPCCreateRequest):
     """创建新 NPC"""
     npc = NPC(name=req.name, role=req.role)
     with get_session() as conn:
-        db = NPCDB(conn)
-        db.create_npc(npc)
+        ndb = NodeDB(conn)
+        from ..services.graph_adapter import _make_eid
+        from ..db import NodeType
+        eid = _make_eid("npc", npc.name)
+        data = npc_to_node_dict(npc)
+        ndb.upsert_node(eid, NodeType.NPC, npc.name, data)
     return NPCResponse(**npc.model_dump())
 
 
@@ -69,11 +82,14 @@ def create_npc(req: NPCCreateRequest):
 def update_npc(npc_id: str, req: NPCUpdateRequest):
     """更新 NPC"""
     with get_session() as conn:
-        db = NPCDB(conn)
-        npc = db.get_npc(npc_id)
+        ndb = NodeDB(conn)
+        nd = ndb.get_node(npc_id)
+        if not nd or nd["type"] != "npc":
+            raise HTTPException(status_code=404, detail="NPC not found")
+        npc = node_to_npc(nd)
         if not npc:
             raise HTTPException(status_code=404, detail="NPC not found")
-        
+
         if req.name is not None:
             npc.name = req.name
         if req.level is not None:
@@ -82,9 +98,15 @@ def update_npc(npc_id: str, req: NPCUpdateRequest):
             npc.status = req.status
         if req.inventory is not None:
             npc.inventory = req.inventory
-        
-        npc.updated_at = datetime.now()
-        db.update_npc(npc)
+
+        # 写回 nodes
+        from ..services.graph_adapter import _make_eid
+        from ..db import NodeType
+        eid = _make_eid("npc", npc.name)
+        data = npc_to_node_dict(npc)
+        data["connected_entity_ids"] = nd["data"].get("connected_entity_ids", [])
+        data["recent_info"] = nd["data"].get("recent_info", "")
+        ndb.upsert_node(eid, NodeType.NPC, npc.name, data)
     return NPCResponse(**npc.model_dump())
 
 
@@ -92,9 +114,9 @@ def update_npc(npc_id: str, req: NPCUpdateRequest):
 def delete_npc(npc_id: str):
     """删除 NPC"""
     with get_session() as conn:
-        db = NPCDB(conn)
-        npc = db.get_npc(npc_id)
-        if not npc:
+        ndb = NodeDB(conn)
+        nd = ndb.get_node(npc_id)
+        if not nd or nd["type"] != "npc":
             raise HTTPException(status_code=404, detail="NPC not found")
-        db.delete_npc(npc_id)
+        ndb.delete_node(npc_id)
     return SuccessResponse(success=True, message=f"NPC {npc_id} deleted")

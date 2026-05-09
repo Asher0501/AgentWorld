@@ -20,15 +20,15 @@ import random
 import time
 from typing import Callable
 
-from ..db import NPCDB, WorldDB, get_session
+from ..db import NodeDB, get_session, node_to_npc
 from ..entities.manager import get_entity_manager, init_entity_manager
 from ..models.npc import NPC, Position
-from ..models.world import World, Zone
+from ..models.world import WorldTime
 
 from ..config.config_loader import has_role
 
 from .graph_engine import GraphEngine
-from .graph_adapter import build_world_graph, _make_eid
+from .graph_adapter import build_world_graph, build_graph_from_nodes, sync_graph_to_nodes, sync_entity_to_db, _make_eid
 from .interaction_resolver import InteractionResolver
 from ..domain.npc_world.adapter import NPCWorldAdapter
 from .pipeline_orchestrator import PipelineOrchestrator
@@ -74,6 +74,7 @@ class GraphNPCEngine:
         self._tick_duration_str = ""
         self._adapter = NPCWorldAdapter()
         self._io_dir = ""
+        self._pending_new_entities: list = []  # LLM 自动注册的新实体缓冲
 
     def add_listener(self, listener: Callable):
         self._listeners.append(listener)
@@ -89,7 +90,11 @@ class GraphNPCEngine:
                 pass
 
     def _ensure_world_initialized(self):
-        """确保实体管理器已初始化 + 数据库中有 NPC（从 node_config.json 加载区域）"""
+        """
+        确保实体管理器已初始化 + nodes 表已播种。
+        首次运行时，NodeDB.load_or_seed() 会从 config 填充
+        NPC/zone/item/recipe + 世界时间到 nodes 表。
+        """
         if self._world_initialized:
             return
         from ..config.config_loader import build_zone_models
@@ -97,39 +102,8 @@ class GraphNPCEngine:
         init_entity_manager(zones)
 
         with get_session() as conn:
-            npc_db = NPCDB(conn)
-            existing = npc_db.get_all_npcs()
-            if not existing:
-                from ..models.npc_defaults import create_diverse_npcs
-                default_npcs = create_diverse_npcs(small=self._small_mode)
-                for npc in default_npcs:
-                    npc_db.create_npc(npc)
-                logger.info(f"初始化 {len(default_npcs)} 个默认 NPC 到数据库")
-            else:
-                # 增量同步：检查 config 中有无 DB 没有的新 NPC
-                from ..models.npc_defaults import create_diverse_npcs
-                config_npcs = create_diverse_npcs(small=self._small_mode)
-                db_names = {n.name for n in existing}
-                new_npcs = [n for n in config_npcs if n.name not in db_names]
-                if new_npcs:
-                    for npc in new_npcs:
-                        npc_db.create_npc(npc)
-                    logger.info(f"增量同步: 新增 {len(new_npcs)} 个 NPC → DB ({', '.join(n.name for n in new_npcs)})")
-
-                # 迁移：补充现有 DB NPC 的 primary_goal（config 新增字段）
-                config_goal_map = {n.name: n.attributes.get("primary_goal", "暂无") for n in config_npcs}
-                patched = 0
-                for db_npc in existing:
-                    old_goal = db_npc.attributes.get("primary_goal") if isinstance(db_npc.attributes, dict) else None
-                    if old_goal is None or old_goal == "":
-                        goal = config_goal_map.get(db_npc.name, "暂无")
-                        if not isinstance(db_npc.attributes, dict):
-                            db_npc.attributes = {}
-                        db_npc.attributes["primary_goal"] = goal
-                        npc_db.update_npc(db_npc)
-                        patched += 1
-                if patched:
-                    logger.info(f"迁移: 为 {patched} 个 NPC 补充 primary_goal")
+            node_db = NodeDB(conn)
+            node_db.load_or_seed()
 
         self._world_initialized = True
 
@@ -160,100 +134,129 @@ class GraphNPCEngine:
         self._ensure_world_initialized()
 
         with get_session() as conn:
-            npc_db = NPCDB(conn)
-            db_npcs = npc_db.get_all_npcs()
+            node_db = NodeDB(conn)
 
-            world_db = WorldDB(conn)
-            world = world_db.get_world()
-            if world:
-                # 动态时间加速：21:00-06:00 夜间每 tick 跳 6 小时
-                h = world.world_time.hour
-                if h >= 21 or h < 6:
-                    tick_minutes = 360
-                    tick_duration_label = "6 小时"
-                else:
-                    tick_minutes = 30
-                    tick_duration_label = "30 分钟"
-                world.world_time.tick(minutes=tick_minutes)
-                world_db.save_world(world)
-                self._current_world_time_str = world.world_time.to_display_str()
-                self._current_time_of_day = world.world_time.get_time_of_day()
-                self._tick_duration_str = tick_duration_label
-                logger.info(f"[WorldTime] → {self._current_world_time_str} ({self._current_time_of_day}) +{tick_duration_label}")
+            # 1. 从 nodes 表加载 NPC 模型
+            npc_nodes = node_db.get_nodes(type_filter="npc")
+            db_npcs = [node_to_npc(nd) for nd in npc_nodes if nd]
+
+            # 2. 世界时间
+            wt_dict = node_db.get_world_time()
+            world_time = WorldTime(**wt_dict)
+            h = world_time.hour
+            if h >= 21 or h < 6:
+                tick_minutes = 360
+                tick_duration_label = "6 小时"
+            else:
+                tick_minutes = 30
+                tick_duration_label = "30 分钟"
+            world_time.tick(minutes=tick_minutes)
+            self._current_world_time_str = world_time.to_display_str()
+            self._current_time_of_day = world_time.get_time_of_day()
+            self._tick_duration_str = tick_duration_label
+            logger.info(f"[WorldTime] → {self._current_world_time_str} ({self._current_time_of_day}) +{tick_duration_label}")
+
+            # 3. 加载所有节点（建图用）
+            node_data = node_db.load_or_seed()
 
         if not db_npcs:
             return []
 
-        # 1. 获取世界对象和区域
-        mgr = get_entity_manager()
-        all_objects = mgr.all()
-        zones = self._get_zones()
-
-        # 2a. 加载物品和配方配置
-        from ..config.config_loader import get_items, get_domain_zones
-        from ..config.config_loader import _load_domain as _load_domain_json
-        item_configs = get_items()
-        recipes_configs = _load_domain_json().get("recipes", [])
-        raw_zone_configs = get_domain_zones()  # dict 格式的区域配置
-
-        # 2b. 从头构建纯拓扑图（无接口边）
-        entities = build_world_graph(db_npcs, all_objects, zones,
-                                     items=item_configs, recipes=recipes_configs, mgr=mgr)
+        # 4. 建图
         self.graph_engine = GraphEngine()
-        for ent in entities.values():
-            self.graph_engine.register_entity(ent)
+        self._pending_new_entities = []
+        self.graph_engine.set_on_entity_created(self._on_graph_entity_created)
+        build_graph_from_nodes(self.graph_engine, node_data)
 
-        # 3a. 创建初始拓扑边（库存 + 区域 + 区域互联）
-        from .graph_adapter import init_graph_edges_from_adapter, process_config_edges
-        init_graph_edges_from_adapter(self.graph_engine, db_npcs, zones)
-
-        # 3b. 从 connected_nodes 补充图边
-        # 加载 NPC dict 配置（含 connected_nodes）
-        from ..config.config_loader import get_npc_defs
-        npc_dict_configs = get_npc_defs()
+        # 5. 配置补充边
+        from ..config.config_loader import get_npc_defs, get_items, get_domain_zones, _load_domain
+        from .graph_adapter import process_config_edges
         process_config_edges(
             self.graph_engine,
-            npc_config_dicts=npc_dict_configs,
-            item_config_dicts=item_configs,
-            zone_config_dicts=raw_zone_configs,
-            recipe_config_dicts=recipes_configs,
+            npc_config_dicts=get_npc_defs(),
+            item_config_dicts=get_items(),
+            zone_config_dicts=get_domain_zones(),
+            recipe_config_dicts=_load_domain().get("recipes", []),
         )
 
-        # 4. 4-LLM 流水线
+        # 6. 从 NPC 模型恢复位置 + 库存边
+        zone_lookup: dict[str, str] = {}
+        for nd in node_data:
+            if nd["type"] == "zone":
+                d = nd["data"] if isinstance(nd["data"], dict) else json.loads(nd["data"])
+                zone_lookup[nd["name"]] = nd["id"]
+                cid = d.get("attributes", {}).get("_config_id", "")
+                if cid:
+                    zone_lookup[cid] = nd["id"]
+        for npc in db_npcs:
+            npc_eid = _make_eid("npc", npc.name)
+            if not self.graph_engine.get_entity(npc_eid):
+                continue
+
+            zone_key = npc.position.zone_id
+            if zone_key:
+                tgt = None
+                if self.graph_engine.get_entity(zone_key):
+                    tgt = zone_key
+                else:
+                    clean = zone_key.replace("zone_", "")
+                    if clean in zone_lookup:
+                        tgt = zone_lookup[clean]
+                if tgt:
+                    self.graph_engine.connect(npc_eid, tgt, qty=1)
+
+            inv = npc.inventory or []
+            inv_counts: dict[str, int] = {}
+            for item_name in inv:
+                inv_counts[item_name] = inv_counts.get(item_name, 0) + 1
+            for item_name, qty in inv_counts.items():
+                item_eid = _make_eid("item", item_name)
+                if not self.graph_engine.get_entity(item_eid):
+                    from .graph_adapter import item_to_entity
+                    ent = item_to_entity(item_name, qty)
+                    self.graph_engine.register_entity(ent)
+                self.graph_engine.connect(npc_eid, item_eid, qty=qty)
+
+        # 7. 4-LLM 流水线
         if self.llm_available:
             self._init_resolver()
         results = await self._execute_4llm_pipeline(db_npcs)
 
-        # 5. 被动衰减 + 记忆
+        # 8. 被动衰减
         self._decay_and_sync(db_npcs)
 
-        # 6. 同步回 NPC 模型
+        # 9. 同步回 NPC 模型
         self._sync_back_to_nodes(db_npcs)
 
-        # 7. 写回数据库
+        # 10. 持久化到 nodes 表
         with get_session() as conn:
-            npc_db = NPCDB(conn)
-            for npc in db_npcs:
-                npc_db.update_npc(npc)
+            node_db = NodeDB(conn)
+            # 世界时间
+            node_db.save_world_time({
+                "year": world_time.year,
+                "month": world_time.month,
+                "day": world_time.day,
+                "hour": world_time.hour,
+                "minute": world_time.minute,
+            })
+            # 所有实体
+            sync_graph_to_nodes(node_db, self.graph_engine)
+
+        # 11. 补充持久化 pending 新实体
+        if self._pending_new_entities:
+            with get_session() as conn:
+                node_db = NodeDB(conn)
+                for ent in self._pending_new_entities:
+                    sync_entity_to_db(node_db, ent)
+            self._pending_new_entities.clear()
 
         return results
 
-    def _get_zones(self) -> list[Zone]:
-        from ..config.config_loader import build_zone_model_full, get_zones as get_config_zones
-        zones = []
-        for zdef in get_config_zones():
-            full = build_zone_model_full(zdef["id"])
-            if full is None:
-                continue
-            zones.append(Zone(
-                id=full["id"],
-                name=full["name"],
-                zone_type=full["zone_type"],
-                bounds=full["bounds"],
-                capacity=full["capacity"],
-                connected_zones=full["connected_zones"],
-            ))
-        return zones
+    def _on_graph_entity_created(self, entity):
+        """图引擎自动创建新实体时的回调 — 缓冲后持久化"""
+        self._pending_new_entities.append(entity)
+
+
 
 
 

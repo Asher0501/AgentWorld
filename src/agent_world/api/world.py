@@ -3,9 +3,9 @@
 from datetime import datetime
 from fastapi import APIRouter, HTTPException
 
-from ..db import WorldDB, get_session
+from ..db import NodeDB, get_session
 from ..db.schemas import WorldResponse, SuccessResponse
-from ..models.world import World
+from ..models.world import WorldTime
 
 router = APIRouter(prefix="/world", tags=["World"])
 
@@ -14,26 +14,38 @@ router = APIRouter(prefix="/world", tags=["World"])
 def get_world():
     """获取世界信息"""
     with get_session() as conn:
-        db = WorldDB(conn)
-        world = db.get_world()
-        if not world:
-            raise HTTPException(status_code=404, detail="World not found")
-        return WorldResponse(**world.model_dump())
+        ndb = NodeDB(conn)
+        wt_dict = ndb.get_world_time()
+        world_time = WorldTime(**wt_dict)
+        return WorldResponse(
+            id="main_world",
+            name="Agent World",
+            description="一个 AI Agent 与 NPC 共存的世界",
+            world_time=world_time.to_dict() if hasattr(world_time, 'to_dict') else wt_dict,
+        )
 
 
 @router.post("/tick", response_model=WorldResponse)
 def tick_world(minutes: int = 1):
     """推进世界时间"""
     with get_session() as conn:
-        db = WorldDB(conn)
-        world = db.get_world()
-        if not world:
-            raise HTTPException(status_code=404, detail="World not found")
-        
-        world.world_time.tick(minutes)
-        world.updated_at = datetime.now()
-        db.save_world(world)
-    return WorldResponse(**world.model_dump())
+        ndb = NodeDB(conn)
+        wt_dict = ndb.get_world_time()
+        world_time = WorldTime(**wt_dict)
+        world_time.tick(minutes)
+        ndb.save_world_time({
+            "year": world_time.year,
+            "month": world_time.month,
+            "day": world_time.day,
+            "hour": world_time.hour,
+            "minute": world_time.minute,
+        })
+    return WorldResponse(
+        id="main_world",
+        name="Agent World",
+        description="一个 AI Agent 与 NPC 共存的世界",
+        world_time=world_time.to_dict() if hasattr(world_time, 'to_dict') else wt_dict,
+    )
 
 
 @router.post("/refresh")

@@ -35,6 +35,19 @@ class GraphEngine:
         self._graph: InteractionGraph = InteractionGraph()
         # 边索引加速：{(src, tgt): InteractionEdge}
         self._edge_by_pair: dict[tuple[str, str], InteractionEdge] = {}
+        # 实体创建回调（用于统一 nodes 表持久化）
+        self._on_entity_created_cb = None
+
+    def set_on_entity_created(self, callback):
+        """设置新实体创建回调 — LLM 自动注册时写入 DB nodes 表"""
+        self._on_entity_created_cb = callback
+
+    def _fire_on_entity_created(self, entity):
+        if self._on_entity_created_cb:
+            try:
+                self._on_entity_created_cb(entity)
+            except Exception as e:
+                logger.warning(f"[Graph] 实体创建回调异常: {e}")
 
     # ═══════════════════════════════════════════
     # 实体管理
@@ -181,6 +194,7 @@ class GraphEngine:
                 logger.info(f"[Graph] 自动注册占位实体: {eid} ({name}) "
                              f"conserved={ent.conserved} "
                              f"(类型{tid}: {count_now}/{max_n or '∞'})")
+                self._fire_on_entity_created(ent)
 
         # 已有边 → 更新 qty
         existing = self._edge_by_pair.get((src_eid, tgt_eid))
@@ -317,6 +331,12 @@ class GraphEngine:
                 return result.is_active
             logger.warning(f"[Graph] modify_qty: 边不存在 {src_eid}→{tgt_eid}, delta={delta}")
             return False
+
+        # qty=-1 = ∞ 供应/汇，任何增减无效（取不完也存不满）
+        if edge.quantity == -1:
+            logger.debug(f"[Graph] modify_qty: {src_eid}→{tgt_eid} qty=-1 (∞)，跳过 delta={delta:+d}")
+            return True
+
         new_qty = edge.quantity + delta
         if new_qty < 0:
             logger.warning(
@@ -390,6 +410,9 @@ class GraphEngine:
                 # 检查库存（考虑同 src→tgt 多次扣减的累积）
                 total_demand = src_total_demand.get(src_eid, need)
                 edge = self.get_edge(src_eid, item_eid)
+                # qty=-1 = ∞ 供应，永远够付
+                if edge and edge.quantity == -1:
+                    continue
                 available = edge.quantity if edge else 0
                 if available >= total_demand:
                     continue  # 够付，不用调整
@@ -623,14 +646,19 @@ class GraphEngine:
         return edge.quantity if edge else 0
 
     def get_inventory_view(self, npc_eid: str) -> list[dict]:
-        """获取 NPC 的库存视图：{item_name, quantity, item_id}"""
+        """获取 NPC 的库存视图：{item_name, quantity, item_id}
+
+        只返回 type=item 的实体，不返回 zone/npc/object 等非物品实体。
+        """
         result = []
+        item_tid = prefix_to_type_id("item_")
         for e in self.get_outgoing_edges(npc_eid):
             if e.quantity > 0:
-                item_ent = self.get_entity(e.target_entity_id)
-                name = item_ent.name if item_ent else e.target_entity_id
+                target = self.get_entity(e.target_entity_id)
+                if not target or target.type_id != item_tid:
+                    continue
                 result.append({
-                    "item_name": name,
+                    "item_name": target.name,
                     "quantity": e.quantity,
                     "item_id": e.target_entity_id,
                 })

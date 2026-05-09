@@ -74,6 +74,11 @@ def npc_to_entity(config: Any) -> Entity:
     if raw_ri:
         ent.recent_info = raw_ri
 
+    # 读回 primary_goal（迁移自 node_config.json）
+    raw_pg = getattr(config, "attributes", {}).get("primary_goal", "")
+    if raw_pg:
+        ent.attributes["primary_goal"] = raw_pg
+
     return ent
 
 
@@ -318,6 +323,113 @@ def process_config_edges(
     # 此处再覆盖会重置掉上 tick 的 LLM #4a delta 效果。
 
     logger.info(f"[ConfigEdges] 配置边补充完毕")
+
+
+# ═══════════════════════════════════════════
+# Entity ↔ DB Node Data 转换
+# ═══════════════════════════════════════════
+
+# type 映射表（供 entity_to_node_dict 使用）
+_ID_TO_TYPE: dict[str, str] = {}
+
+
+def _init_type_map():
+    """初始化 entity_id → type_name 映射"""
+    global _ID_TO_TYPE
+    if _ID_TO_TYPE:
+        return
+    from ..config.config_loader import get_all_prefixes, get_type_def
+    for pfx in get_all_prefixes():
+        # 去掉尾部下划线
+        role_str = pfx.rstrip("_")
+        _ID_TO_TYPE[role_str] = role_str
+
+
+def entity_to_node_dict(entity) -> dict:
+    """
+    将 Entity 序列化为 DB nodes 表的 data 列可存格式
+    """
+    return {
+        "id": entity.entity_id,
+        "type": entity.entity_type or "npc",
+        "name": entity.name,
+        "data": {
+            "role": entity.role,
+            "desc": entity.desc,
+            "traits": list(entity.traits),
+            "attributes": dict(entity.attributes),
+            "connected_entity_ids": list(entity.connected_entity_ids),
+            "conserved": entity.conserved,
+            "space": entity.space,
+            "recent_info": entity.recent_info,
+        },
+    }
+
+
+def node_dict_to_entity(node: dict) -> Entity:
+    """
+    从 DB nodes 表的记录重建 Entity
+    """
+    data = node["data"] if isinstance(node["data"], dict) else json.loads(node["data"])
+    ent = Entity(entity_id=node["id"], name=node["name"], entity_type=node["type"])
+    ent.role = data.get("role", "")
+    ent.desc = data.get("desc", "")
+    ent.traits = list(data.get("traits", []))
+    ent.attributes = dict(data.get("attributes", {}))
+    for conn in data.get("connected_entity_ids", []):
+        ent.connect_to(conn)
+    ent.conserved = data.get("conserved", False)
+    ent.space = data.get("space", "physical")
+    ent.recent_info = data.get("recent_info", "")
+    return ent
+
+
+def build_graph_from_nodes(ge, node_data_list: list[dict]):
+    """
+    从 nodes 表读取的节点列表注册到图引擎。
+    包含 entity 注册 + 边恢复。
+    """
+    # 1. 注册所有实体
+    for nd in node_data_list:
+        ent = node_dict_to_entity(nd)
+        ge.register_entity(ent)
+
+    # 2. 从 connected_entity_ids 重建边
+    data_eids = {nd["id"] for nd in node_data_list}
+    for nd in node_data_list:
+        src_id = nd["id"]
+        data = nd["data"] if isinstance(nd["data"], dict) else json.loads(nd["data"])
+        for tgt_id in data.get("connected_entity_ids", []):
+            if tgt_id in data_eids:  # 只连已知实体
+                # 不覆盖 qty（重建时默认=1，之后由 process_config_edges 修正）
+                if not ge.get_edge(src_id, tgt_id):
+                    ge.connect(src_id, tgt_id, qty=1)
+
+    total = len(node_data_list)
+    logger.info(f"[Adapter] 从 nodes 构建: {total} 个实体")
+
+
+def sync_graph_to_nodes(node_db, ge):
+    """
+    将图引擎所有实体状态同步回 DB nodes 表。
+    tick 结束时调用。
+    """
+    nodes = []
+    for ent in ge.all_entities():
+        nd = entity_to_node_dict(ent)
+        nodes.append(nd)
+    if nodes:
+        node_db.upsert_many(nodes)
+    logger.info(f"[Adapter] 同步 {len(nodes)} 个实体回 nodes 表")
+
+
+def sync_entity_to_db(node_db, entity):
+    """
+    将单个实体同步回 DB nodes 表。
+    在 LLM 自动注册新实体时调用。
+    """
+    nd = entity_to_node_dict(entity)
+    node_db.upsert_node(nd["id"], nd["type"], nd["name"], nd["data"])
 
 
 # ─── 辅助 ───

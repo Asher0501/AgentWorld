@@ -67,8 +67,9 @@ def _find_similar_entity(name: str, graph) -> str | None:
     # 收集已有实体（跳过 NPC）
     candidates: list[tuple[str, str]] = []
     npc_zones: dict[str, str] = {}
-    for eid, ent in graph.entities.items():
-        raw_name = ent.name if hasattr(ent, 'name') else ent.entity_id
+    for ent in graph.all_entities():
+        eid = ent.entity_id
+        raw_name = ent.name if hasattr(ent, 'name') else eid
         if not raw_name:
             continue
         if eid.startswith("npc_"):
@@ -365,6 +366,7 @@ class NPCWorldAdapter(DomainAdapter):
             ("personality",          "content"),
             ("recent_info",          "content"),
             ("inventory",            "content"),
+            ("zone_resources",       "content"),
             ("zone_others",          "content"),
             ("zone_connections",     "content"),
             ("available_recipes",    "content"),
@@ -736,6 +738,46 @@ class NPCWorldAdapter(DomainAdapter):
         connections = f"{zone_ent.name} ↔ {'、'.join(sorted(neighbors))}"
         template = self._adapter_data.get("zone_connections", "")
         return template.format(connections=connections)
+
+    def slot_zone_resources(self, **kw) -> str:
+        """
+        渲染当前区域可用的环境资源（zone→item 边）。
+        从 
+          - qty=-1 的物品 → "∞"
+          - qty=N 的物品 → "xN"
+        格式化后被 LLM 看到用途：NPC 可以在此环境中获取这些物品。
+        """
+        entity = kw.get("entity")
+        ge = kw.get("engine")
+        if not entity or not ge:
+            return ""
+        # 找 NPC 所在区域
+        zone_ent = None
+        for conn in entity.connected_entity_ids:
+            e = ge.get_entity(conn)
+            if e and _has_role(e.type_id, "region"):
+                zone_ent = e
+                break
+        if not zone_ent:
+            return ""
+        # 收集该区域→item 的出边
+        from ...config.config_loader import prefix_to_type_id
+        item_tid = prefix_to_type_id("item_")
+        items = []
+        for edge in ge.get_outgoing_edges(zone_ent.entity_id):
+            tgt = ge.get_entity(edge.target_entity_id)
+            if not tgt or tgt.type_id != item_tid:
+                continue
+            if edge.quantity == 0:
+                continue
+            if edge.quantity == -1:
+                items.append(f"{tgt.name}(∞)")
+            else:
+                items.append(f"{tgt.name}x{edge.quantity}")
+        if not items:
+            return ""
+        template = self._adapter_data.get("zone_resources", "")
+        return template.format(zone_name=zone_ent.name, resources="、".join(items))
 
     def slot_decision_guidance(self, **kw) -> str:
         entity = kw.get("entity")

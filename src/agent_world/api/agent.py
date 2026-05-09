@@ -128,29 +128,34 @@ async def register_agent(req: AgentRegisterRequest):
 @router.get("/world", response_model=WorldStateResponse)
 async def get_world(x_api_key: str = Header(...)):
     """获取世界状态"""
-    from agent_world.db import get_session, WorldDB
-    from agent_world.entities import WorldObjectManager
+    from agent_world.db import get_session, NodeDB
+    from agent_world.models.world import WorldTime
+    from agent_world.config.config_loader import build_zone_models
     
     agent_id = _verify_api_key(x_api_key)
     if not agent_id:
         raise HTTPException(status_code=401, detail="Invalid API Key")
     
     with get_session() as conn:
-        world_db = WorldDB(conn)
-        world = world_db.get_world()
-        if not world:
-            raise HTTPException(status_code=404, detail="World not found")
+        ndb = NodeDB(conn)
+        wt_dict = ndb.get_world_time()
+        world_time = WorldTime(**wt_dict)
         
-        # 获取共享实体管理器
+        # zones 从 config + nodes 加载
+        zones = build_zone_models()
+        
+        # 对象从 nodes 加载
         from agent_world.entities import get_entity_manager, init_entity_manager
-        zone_dicts = [z.model_dump() for z in world.zones]
+        zone_dicts = [z.model_dump() for z in zones]
         init_entity_manager(zone_dicts)
         obj_manager = get_entity_manager()
         
+        zone_nodes = ndb.get_nodes(type_filter="zone")
+        
         return WorldStateResponse(
-            world_id=world.id,
-            world_time=world.world_time.to_dict() if world.world_time else {},
-            zones=[z.model_dump() for z in world.zones],
+            world_id="main_world",
+            world_time=world_time.to_dict() if hasattr(world_time, 'to_dict') else wt_dict,
+            zones=zone_dicts,
             objects=[o.to_dict() for o in obj_manager.all()],
         )
 
@@ -158,27 +163,29 @@ async def get_world(x_api_key: str = Header(...)):
 @router.get("/npcs")
 async def get_npcs(x_api_key: str = Header(...)):
     """获取所有 NPC 列表"""
-    from agent_world.db import get_session, NPCDB
+    from agent_world.db import get_session, NodeDB
+    from agent_world.db.converters import node_to_npc
     
     agent_id = _verify_api_key(x_api_key)
     if not agent_id:
         raise HTTPException(status_code=401, detail="Invalid API Key")
     
     with get_session() as conn:
-        npc_db = NPCDB(conn)
-        npcs = npc_db.get_all_npcs()
+        ndb = NodeDB(conn)
+        npc_nodes = ndb.get_nodes(type_filter="npc")
+        npcs = [node_to_npc(nd) for nd in npc_nodes if nd]
         return {
             "success": True,
             "data": [
                 {
-                    "id": npc.id,
-                    "name": npc.name,
-                    "role": npc.role,
-                    "position": npc.position.model_dump() if hasattr(npc.position, 'model_dump') else npc.position,
-                    "level": npc.level,
-                    "status": npc.status.value,
+                    "id": n.id or nd["id"],
+                    "name": n.name,
+                    "role": n.role,
+                    "position": n.position.model_dump() if hasattr(n.position, 'model_dump') else {"zone_id": n.position.zone_id},
+                    "level": n.level,
+                    "status": n.status.value,
                 }
-                for npc in npcs
+                for n, nd in zip(npcs, npc_nodes)
             ],
             "count": len(npcs),
         }
@@ -225,45 +232,39 @@ async def act(req: ActRequest, x_api_key: str = Header(...)):
     # === 移动 ===
     if action == "move" and target:
         with get_session() as conn:
-            world_db = WorldDB(conn)
-            world = world_db.get_world()
+            ndb = NodeDB(conn)
+            zone_nodes = ndb.get_nodes(type_filter="zone")
             
-            if not world:
-                return ActResponse(success=False, message="World not found")
-            
-            # 查找目标 zone
+            # 查找目标 zone（匹配 id 或 name）
             target_zone = None
-            for zone in world.zones:
-                if zone.id == target:
-                    target_zone = zone
+            for z in zone_nodes:
+                if z["id"] == target or z["name"] == target:
+                    target_zone = z
                     break
             
             if not target_zone:
                 return ActResponse(success=False, message=f"Zone '{target}' not found")
             
-            # 检查连通性
+            # 检查连通性（从节点数据中读取连接）
             current_zone_id = agent["position"]["zone_id"]
-            current_zone = None
-            for zone in world.zones:
-                if zone.id == current_zone_id:
-                    current_zone = zone
-                    break
+            target_data = target_zone["data"] if isinstance(target_zone["data"], dict) else json.loads(target_zone["data"])
+            target_conns = target_data.get("connected_entity_ids", [])
             
-            if current_zone and target_zone.id not in current_zone.connected_zones:
+            if current_zone_id != target_zone["id"] and current_zone_id not in target_conns:
                 return ActResponse(
                     success=False, 
-                    message=f"Cannot move from {current_zone_id} to {target_zone.id}: not connected"
+                    message=f"Cannot move from {current_zone_id} to {target}: not connected"
                 )
             
             # 执行移动
-            agent["position"]["zone_id"] = target_zone.id
-            agent["position"]["x"] = (target_zone.bounds["min_x"] + target_zone.bounds["max_x"]) / 2
-            agent["position"]["y"] = (target_zone.bounds["min_y"] + target_zone.bounds["max_y"]) / 2
+            agent["position"]["zone_id"] = target_zone["id"]
+            agent["position"]["x"] = 50.0
+            agent["position"]["y"] = 50.0
             
             return ActResponse(
                 success=True,
-                message=f"Moved to {target_zone.name}",
-                state_change={"zone_id": target_zone.id},
+                message=f"Moved to {target_zone['name']}",
+                state_change={"zone_id": target_zone["id"]},
             )
     
     # === 交互（与物体）===
