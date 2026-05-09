@@ -458,6 +458,7 @@ class PipelineOrchestrator:
             comp.failures = self._vl.check_all(
                 comp.stories, [], comp.attr_ops, comp.recent_info,
                 mask=_PROJECTION_CHECK_MASK,
+                raw_llm_output=getattr(self._pp, "_last_raw_attr_response", ""),
             )
 
             if not comp.failures:
