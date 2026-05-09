@@ -385,6 +385,7 @@ class PipelineOrchestrator:
         # ═══════════════════════════════════════════
         # Phase 1: LLM #4 — 拓扑执行
         # ═══════════════════════════════════════════
+        feedback_topo = ""
         for attempt in range(max_retries + 1):
             comp.topo_ops = await self._pp.resolve_topology_changes_async(
                 npc_plans=comp_plans,
@@ -394,6 +395,7 @@ class PipelineOrchestrator:
                 tick_duration_str=ctx.tick_duration_str,
                 topo_pool=comp.eids,
                 label_map=comp.label_map,
+                feedback=feedback_topo,
             )
             logger.info(f"[分量 {comp.id}] LLM #4: {len(comp.topo_ops)} 个拓扑操作")
 
@@ -412,7 +414,7 @@ class PipelineOrchestrator:
                 break
 
             first_topo = getattr(self._pp, "_last_raw_topo_response", "")
-            feedback = self._vl.build_feedback(
+            feedback_topo = self._vl.build_feedback(
                 comp.failures,
                 previous_topo_output=first_topo,
             )
@@ -437,6 +439,7 @@ class PipelineOrchestrator:
         # ═══════════════════════════════════════════
         # Phase 2: LLM #5 — 状态投影 (attr + recent_info)
         # ═══════════════════════════════════════════
+        feedback_proj = ""
         for attempt in range(max_retries + 1):
             comp.attr_ops, comp.recent_info = await self._pp.resolve_projections_async(
                 npc_plans=comp_plans,
@@ -445,6 +448,7 @@ class PipelineOrchestrator:
                 topo_diff=comp.topo_diff,
                 world_time_str=ctx.world_time_str,
                 tick_duration_str=ctx.tick_duration_str,
+                feedback=feedback_proj,
             )
             logger.info(f"[分量 {comp.id}] LLM #5: {len(comp.attr_ops)} attr, "
                          f"{len(comp.recent_info)} ri")
@@ -464,7 +468,7 @@ class PipelineOrchestrator:
                 break
 
             first_attr = getattr(self._pp, "_last_raw_attr_response", "")
-            feedback = self._vl.build_feedback(
+            feedback_proj = self._vl.build_feedback(
                 comp.failures,
                 previous_attr_output=first_attr,
             )
