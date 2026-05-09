@@ -552,7 +552,7 @@ class PipelineOrchestrator:
                     if not isinstance(history, list):
                         history = []
                     history.insert(0, {"t": ctx.world_time_str, "text": txt})
-                    history = history[:3]
+                    history = history[:10]
                     ent.recent_info = _json.dumps(history, ensure_ascii=False)
                     w += 1
             if w:

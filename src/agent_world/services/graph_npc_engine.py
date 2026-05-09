@@ -231,7 +231,9 @@ class GraphNPCEngine:
         # 10. 持久化到 nodes 表
         with get_session() as conn:
             node_db = NodeDB(conn)
-            # 世界时间
+            # 所有实体（先写，不包含 world_time）
+            sync_graph_to_nodes(node_db, self.graph_engine)
+            # 世界时间（后写，确保不会被 sync_graph_to_nodes 覆盖）
             node_db.save_world_time({
                 "year": world_time.year,
                 "month": world_time.month,
@@ -239,8 +241,6 @@ class GraphNPCEngine:
                 "hour": world_time.hour,
                 "minute": world_time.minute,
             })
-            # 所有实体
-            sync_graph_to_nodes(node_db, self.graph_engine)
 
         # 11. 补充持久化 pending 新实体
         if self._pending_new_entities:
