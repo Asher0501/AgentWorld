@@ -399,10 +399,11 @@ class PipelineOrchestrator:
             )
             logger.info(f"[分量 {comp.id}] LLM #4: {len(comp.topo_ops)} 个拓扑操作")
 
-            # 只校验拓扑操作（entity_existence / capacity_upper_bound / degree_conservation）
+            # 只校验拓扑操作（json_format / entity_existence / capacity_upper_bound / degree_conservation）
             comp.failures = self._vl.check_all(
                 comp.stories, comp.topo_ops, [], {},
                 mask=_TOPOLOGY_CHECK_MASK,
+                raw_llm_output=getattr(self._pp, "_last_raw_topo_response", ""),
             )
 
             if not comp.failures:

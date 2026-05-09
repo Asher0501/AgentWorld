@@ -53,6 +53,7 @@ class VerificationLayer:
         topo_ops: list[dict],
         attr_ops: list[dict],
         recent_info_map: dict[str, str],
+        raw_llm_output: str = "",
     ) -> dict:
         """构建统一 context dict。"""
         # entity_existence: 从操作中提取所有实体引用
@@ -90,6 +91,9 @@ class VerificationLayer:
             "stories": stories,
             "resolver": self._resolver,
             "label_map": self._get_label_map(),
+
+            # json_format (index 7) — 原始 LLM 输出，用于格式校验
+            "raw_llm_output": raw_llm_output,
         }
 
     def check_all(
@@ -99,6 +103,7 @@ class VerificationLayer:
         attr_ops: list[dict],
         recent_info_map: dict[str, str],
         mask: list[bool] | None = None,
+        raw_llm_output: str = "",
     ) -> list[CheckFailure]:
         """
         根据 mask 运行所有已激活的校验项。
@@ -106,12 +111,14 @@ class VerificationLayer:
         Args:
             mask: 可选校验 mask，None 时使用预写校验默认 mask
                   (prewrite_layer_mask)
+            raw_llm_output: LLM 原始响应文本（用于 json_format 校验）
 
         Returns:
             CheckFailure[] — 空列表表示全部通过
         """
         effective_mask = mask if mask is not None else _PREWRITE_CHECK_MASK
-        ctx = self._build_context(stories, topo_ops, attr_ops, recent_info_map)
+        ctx = self._build_context(stories, topo_ops, attr_ops, recent_info_map,
+                                  raw_llm_output=raw_llm_output)
         failures = run_checks(effective_mask, ctx)
 
         for f in failures:

@@ -64,6 +64,11 @@ ERROR_CODE_MAP: dict[int, dict[str, str]] = {
         "description": "操作方向与叙事语境矛盾",
         "fix_hint": "修正 delta 方向使其与自然语言描述中的语义一致",
     },
+    8: {
+        "title": "json_format",
+        "description": "LLM 输出不是合法 JSON—输出必须是一个包含 operations(必填)和 thinking(可选)的 JSON 对象",
+        "fix_hint": "确保输出是合法 JSON: 必须以 { 开头, 包含 operations 数组字段, 无多余文字或 markdown 代码块",
+    },
 }
 
 
@@ -553,3 +558,94 @@ def _check_degree_conservation(ctx: dict) -> list[CheckFailure]:
         message=message,
         details=details_fmt,
     )]
+
+
+# ────────────────────────────────────────────────────────
+
+
+@register(code=8, name="json_format",
+          desc="检查 LLM #4a 输出是否为合法 JSON（含 operations 字段）")
+def _check_json_format(ctx: dict) -> list[CheckFailure]:
+    """
+    校验 LLM #4a 原始输出是否为合法 JSON。
+
+    context 字段:
+      raw_llm_output: str — LLM #4a 的原始响应文本
+
+    注意：
+      - 仅校验格式合法性，不校验操作内容语义
+      - 允许 ```json 代码块包裹（自动剥离）
+      - operations 是必填字段，可以为空数组 []
+    """
+    raw = ctx.get("raw_llm_output", "")
+    if not raw:
+        return []
+
+    # Step 1: 检查是否包含 { 或 [（纯文本一定不含）
+    if '{' not in raw and '[' not in raw:
+        return [CheckFailure(
+            code=8,
+            check_name="json_format",
+            message="输出不是 JSON 格式（纯文本，无 { 或 [）",
+            details=[
+                f"    原始输出前 120 字: {raw[:120]}..." if len(raw) > 120 else f"    原始输出: {raw}",
+                "    提示: 必须输出 JSON 对象，形如 {'operations': []}",
+            ],
+        )]
+
+    # Step 2: 提取 JSON（处理 markdown 代码块）
+    json_str = raw.strip()
+    if '```' in json_str:
+        for block in json_str.split('```'):
+            block = block.strip()
+            if block.startswith('json'):
+                block = block[4:].strip()
+            if block.startswith('{') or block.startswith('['):
+                json_str = block
+                break
+
+    # Step 3: 尝试解析
+    import json
+    try:
+        parsed = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        return [CheckFailure(
+            code=8,
+            check_name="json_format",
+            message=f"JSON 语法错误: {e}",
+            details=[
+                f"    错误位置: 第 {e.lineno} 行 第 {e.colno} 列",
+                f"    错误内容: {e.msg}",
+                f"    原始输出: {raw[:200]}..." if len(raw) > 200 else f"    原始输出: {raw}",
+            ],
+        )]
+
+    # Step 4: 检查结构（必须是 dict，含 operations 字段）
+    if not isinstance(parsed, dict):
+        return [CheckFailure(
+            code=8,
+            check_name="json_format",
+            message=f"JSON 类型错误: 期望对象 {{}}, 实际为 {type(parsed).__name__}",
+            details=[f"    原始输出: {raw[:200]}..." if len(raw) > 200 else f"    原始输出: {raw}"],
+        )]
+
+    if "operations" not in parsed:
+        return [CheckFailure(
+            code=8,
+            check_name="json_format",
+            message="JSON 缺少必填字段 'operations'",
+            details=[
+                f"    找到的字段: {list(parsed.keys())}",
+                "    提示: 输出需包含 operations 数组 (即使为空)",
+            ],
+        )]
+
+    if not isinstance(parsed["operations"], list):
+        return [CheckFailure(
+            code=8,
+            check_name="json_format",
+            message="字段 'operations' 必须是数组",
+            details=[f"    当前类型: {type(parsed['operations']).__name__}"],
+        )]
+
+    return []
