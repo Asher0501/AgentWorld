@@ -99,19 +99,15 @@ flowchart TB
 ### Pipeline Stage Details · 管线阶段详解
 
 | Stage · 阶段 | Type · 类型 | Input · 输入 | Output · 输出 | Retry · 重试 |
-|:----------|:----------|:-----------|:------------|:------------|
+|:-----------|:-----------|:------------|:-------------|:------------|
+| **↳ Component Split · 分量分割** | Code · 代码 | GraphEngine topology · 图引擎拓扑 | N connected components · N 个连通分量 | BFS deterministic |
 | **#1 Plan · 规划** | LLM · 语言模型 | Entity state + topology · 实体状态+拓扑 | Natural language plan · NL 计划 | — |
 | **↳ Exec Results · 执行结果** | Code · 代码 | GraphEngine · 图引擎 | Per-NPC exec dict · 执行字典 | — |
 | **#3 Narrative · 叙事** | LLM · 语言模型 | Plans + exec_results · 计划+结果 | Story text · 故事文本 | — |
-| **#4a Topo Delta · 拓扑增量** | LLM · 语言模型 | Plans + stories + topology · 计划+故事+拓扑 | `delta`/`system_delta`/`recipe` ops · 结构化 JSON | ✅ 校验失败时重试 |
-| **↳ Conservation Validator · 度守恒校验** | Code · 代码 | Topo ops · 拓扑操作 | Pass / Fail · 通过/失败 | 触发重试 |
-| **#5 Attribute Projection · 属性投影** | LLM · 语言模型 | Results + stories + topo_diff · 结果+故事+拓扑差 | Attribute deltas + recent_info · 属性变化+近况 | — |
-| **↳ Component Split · 分量分割** | Code · 代码 | Executed graph · 执行后图 | N connected components · N 个连通分量 | BFS, zone-blocked |
-| **#3 Narrative · 叙事** | LLM · 语言模型 | Translated topo + plans · 翻译后拓扑+计划 | Story per component · 逐分量故事 | Free text · 自由文本 |
-| **#4a Topo Delta · 拓扑增量** | LLM · 语言模型 | Stories + graph state · 故事+图状态 | `delta`/`system_delta`/`recipe` · 结构化 JSON | JSON schema + Σ=0 |
-| **↳ Conservation Validator · 守恒校验** | Code · 代码 | Delta ops | Pass / partial fail · 通过/部分失败 | Σ(delta)=0 per group |
-| **#4b Content · 属性变化** | LLM · 语言模型 | Stories + topo | `attr` deltas + `recent_info` · 属性+近况 | JSON schema |
-| **#5 Verification · 校验** | Code · 代码 | All outputs · 全部输出 | Pass → persist / Fail → retry component · 通过→落盘/失败→仅重跑本分量 | 6 registry checks |
+| **#4a Topo Delta · 拓扑增量** | LLM · 语言模型 | Plans + stories + topology · 计划+故事+拓扑 | `delta`/`system_delta`/`recipe` ops · 结构化 JSON | ✅ 校验失败带反馈重试 |
+| **↳ Conservation Validator · 度守恒校验** | Code · 代码 | Topo ops · 拓扑操作 | Pass / Fail · 通过/失败 | 触发重试（带 build_feedback） |
+| **#5 Attribute Projection · 属性投影** | LLM · 语言模型 | Results + stories + topo_diff · 结果+故事+拓扑差 | attr deltas + recent_info · 属性变化+近况 | ✅ 校验失败带反馈重试 |
+| **↳ Verification · 校验** | Code · 代码 | All outputs · 全部输出 | Pass/Fail · 通过/失败 | 6 check registry (mask 控制) |
 | **↳ Merge · 归并** | Code · 代码 | N component results · N 个分量结果 | Aggregated operations · 归并后操作 | Deterministic |
 
 ---
@@ -233,20 +229,23 @@ All checks run against the **graph engine ground truth**. Failed checks trigger 
 > **CN**: 两层校验系统在数据落盘前运行。两层的激活配置都来自 `domain.json` 中的 **mask**。
 
 ```mermaid
-flowchart LR
-    subgraph V["LLM #5 Verification · 校验"]
-        TV["🔍 Translation Verification · 翻译校验<br/><small>checks translation accuracy</small>"]
-        PV["🔍 Pre-write Verification · 预写校验<br/><small>checks delta validity</small>"]
-    end
+flowchart TD
+    L4A["LLM #4a · Topo Delta<br/>拓扑增量"] --> V4["🔍 Verify #4a<br/>度守恒 / 容量 / 实体存在"]
+    V4 -->|"❌"| RET4["🔁 Retry #4a<br/>带 build_feedback"]
+    RET4 --> L4A
+    V4 -->|"✅"| L5["LLM #5 · Attribute Projection<br/>属性投影"]
+    L5 --> V5["🔍 Verify #5<br/>实体 / 故事一致性"]
+    V5 -->|"❌"| RET5["🔁 Retry #5<br/>带 feedback"]
+    RET5 --> L5
+    V5 -->|"✅"| PERSIST["💾 Apply + Sync to DB<br/>落地 + sync_graph_to_nodes()"]
 
-    L4A["LLM #4a"] --> L4B["LLM #4b"] --> V
-    TV -->|"❌"| RET["🔁 Retry #4a+#4b<br/>with feedback"]
-    PV -->|"❌"| RET
-    PV -->|"✅"| PERSIST["💾 Persist to DB · 落盘"]
-    TV --> PV
-
-    style TV fill:#fff9c4,stroke:#f57f17
-    style PV fill:#ffebee,stroke:#c62828
+    style L4A fill:#10b981,color:#fff
+    style V4 fill:#fff9c4,stroke:#f57f17
+    style RET4 fill:#ef4444,color:#fff
+    style L5 fill:#6366f1,color:#fff
+    style V5 fill:#fff9c4,stroke:#f57f17
+    style RET5 fill:#ef4444,color:#fff
+    style PERSIST fill:#475569,color:#fff
 ```
 
 ### Verification Registry · 校验注册器
@@ -392,29 +391,34 @@ free text  free narrative  JSON schema  JSON schema
 
 ```
 src/agent_world/
-├── api/                    # HTTP API
-├── cognition/              # Per-entity prompt construction
-├── config/                 # Domain configuration
-│   ├── domain.json         # **ALL domain content** (swap for new world)
-│   └── node_config.json    # Node type ontology
-├── db/                     # SQLite persistence
-├── entities/               # Entity models
-├── models/                 # Pydantic data models
-└── services/               # Core pipeline
-    ├── graph_npc_engine.py         # Main orchestration engine (entry point)
-    ├── pipeline_orchestrator.py    # 🔷 Pipeline orchestrator (LLM #1–#5 flow)
-    ├── graph_engine.py             # 🔷 Pure graph topology engine + component split
-    ├── graph_adapter.py            # DB → Graph adapter
-    ├── domain_adapter.py           # Renders slots from domain.json
-    ├── pipeline_engine.py          # Stage engine (LLM call wrappers)
-    ├── prompt_assembler.py         # Slot-based prompt assembly (+ TL)
-    ├── interaction_resolver.py     # LLM API wrapper
-    ├── interaction_layer.py        # LLM #3 story generation
-    ├── intent_executor.py          # LLM #2 execution
-    ├── post_processor.py           # LLM #4a (topo delta) + #4b (content)
-    ├── conservation_validator.py   # Σ=0 validation
-    ├── verification_registry.py    # 🔷 Centralized check registration
-    └── verification_layer.py       # LLM #5 verification orchestrator
+├── api/                     # HTTP API
+├── config/                  # Domain configuration
+│   ├── domain.json          # **ALL domain content** (swap for new world)
+│   └── node_config.json     # Node type ontology
+├── db/                      # SQLite persistence (unified `nodes` table)
+│   ├── db.py                # NodeDB · 统一 CRUD
+│   ├── converters.py        # node_to_npc() / npc_to_node_dict()
+│   └── schemas.py           # Pydantic request/response schemas
+├── domain/                  # Domain adapter
+│   ├── adapter.py           # 🔷 DomainAdapter 抽象基类
+│   └── npc_world/
+│       └── adapter.py       # NPCWorldAdapter · 猎魔人域实现
+├── entities/                # Entity models + manager
+├── models/                  # Pydantic data models
+└── services/                # Core pipeline
+    ├── graph_engine.py             # 🔷 Graph engine · 图拓扑 + 分量分割
+    ├── graph_adapter.py            # DB/Config → Graph + sync_graph_to_nodes()
+    ├── graph_npc_engine.py         # Main tick entry point
+    ├── pipeline_orchestrator.py    # 🔷 Pipeline orchestrator (LLM #1→#3→#4a→#5)
+    ├── pipeline_engine.py          # Stage engine · LLM call wrappers
+    ├── prompt_assembler.py         # Slot-based prompt assembly + translation
+    ├── interaction_resolver.py     # LLM API wrapper (MiniMax / OpenAI)
+    ├── interaction_layer.py        # LLM #3 · story generation
+    ├── post_processor.py           # LLM #4a (topo delta) + #5 (projection)
+    ├── verification_layer.py       # 校验编排器 (LLM #4a/5 校验)
+    ├── verification_registry.py    # 6-check registry · mask 控制
+    ├── conservation_validator.py   # Σ=0 校验器 (被 verification 调用)
+    └── intent_executor.py          # 旧 LLM #2 执行器（部分保留）
 ```
 
 ---
@@ -491,11 +495,16 @@ flowchart TB
 ```bash
 pip install -r requirements.txt
 
-# Initialize database · 初始化数据库
+# Initialize database (seed 38 nodes from config) · 初始化数据库
 python3 -c "from agent_world.db.db import init_db; init_db()"
 
 # Run a single tick with real LLM calls · 运行一个真实 LLM tick
-python3 run_minimal_tick.py
+python3 run_1tick.py [tick_label]
+
+# Run with fresh DB (--rm-db flag in run_1tick.py) · 使用新数据库
+python3 run_1tick.py tick_001
+
+# LLM IO archived to /tmp/full_tick/{tick_label}/ per run
 ```
 
 ---
