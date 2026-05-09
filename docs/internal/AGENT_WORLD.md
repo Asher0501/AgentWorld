@@ -68,8 +68,8 @@ CREATE TABLE nodes (
 | `services/interaction_resolver.py` | LLM API 封装（MiniMax/OpenAI），含重试、超时 |
 | `services/interaction_layer.py` | LLM #3 故事生成（`_build_story_prompt()`） |
 | `services/post_processor.py` | **LLM #4a** 拓扑增量解析 + **LLM #5** 状态投影解析 |
-| `services/verification_layer.py` | 校验编排器：entity_existence / capacity / degree_conservation |
-| `services/verification_registry.py` | 校验注册器：6 项可配校验（mask 控制） |
+| `services/verification_layer.py` | 校验编排器：8 项校验（含 json_format） |
+| `services/verification_registry.py` | 校验注册器：8 项可配校验（mask 控制） |
 | `services/conservation_validator.py` | 度守恒校验器（被 verification_layer 调用） |
 | `domain/adapter.py` | 域适配器抽象基类：NodeClassification / PipelineStage / SlotDef |
 | `domain/npc_world/adapter.py` | 猎魔人域的具体适配器：prompt slot 渲染、LLM 输出解析 |
@@ -263,16 +263,26 @@ nodes 表（唯一持久化层）
 
 ## 五、校验系统
 
-### 6 项可配校验
+### 8 项可配校验
 
 | 索引 | 校验项 | 说明 |
 |:----:|--------|------|
-| 0 | **entity_existence** | 所有引用的实体在图中存在 |
-| 1 | **quantity_accuracy** | LLM 输出的数量与图事实一致 |
-| 2 | **capacity_upper_bound** | 负 delta ≤ 当前边 qty |
-| 3 | **entity_coverage** | 所有实体在翻译层输出中出现 |
-| 4 | **direction_pairing** | 双向流交替方向 |
-| 5 | **story_consistency** | 操作与故事内容一致 |
+| **0** | `entity_existence` | 所有引用的实体在图中存在 |
+| **1** | `quantity_accuracy` | LLM 输出的数量与图事实一致 |
+| **2** | `capacity_upper_bound` | 负 delta ≤ 当前边 qty |
+| **3** | `entity_coverage` | 所有实体在翻译层输出中出现 |
+| **4** | `direction_pairing` | 双向流交替方向 |
+| **5** | `story_consistency` | 操作与故事内容一致 |
+| **6** | `degree_conservation` | 守恒物品 Σdelta=0 |
+| **7** | `json_format` | **原始 LLM 输出是否合法 JSON**（LLM #4a 和 LLM #5 均启用） |
+
+**校验项 7（json_format）** 作用在原始 LLM 文本上（`raw_llm_output`），分四级：
+1. 输出包含 `{` 或 `[`（非纯文本）
+2. `json.loads()` 语法解析通过
+3. 根节点是 dict 且有 `operations` 字段
+4. `operations` 是数组
+
+通过 `topology_layer_mask[7]` 和 `projection_layer_mask[7]` 分别控制拓扑和投影层的开关。
 
 每项通过 `domain.json` 中的 mask 控制启用/禁用。
 `verification_registry.py` 是注册器，`verification_layer.py` 是编排器。
@@ -370,9 +380,18 @@ LLM #1 (决策)    LLM #3 (故事)    LLM #4a (拓扑)    LLM #5 (投影)
 - **分量数量不稳定**：4~6 个分量，依赖 NPC 实时位置重新聚类
 - **自动对称未集成**：`_auto_symmetry` 代码存在但当前不走
 
-### 下一轮工作
+### 已修复问题
 
-1. 修复 LLM #3 循环重复（加长度约束）
-2. 增加 MiniMax API 超时时间
-3. 跑完 tick_004~tick_030 收集纵向数据
-4. 分析并行调度优化
+- **World time 覆盖 bug**（commit `d28a6e6`）：`save_world_time()` 在 `sync_graph_to_nodes()` 之前调用，后者写 _system_world 时不包含 world_time → 每 tick 世界时间重置为 08:30 → `recent_info` 全部带同一时间戳。修复：交换顺序，先 sync 后 save。
+- **`recent_info` 累积**：上限 3→10，配合世界时间修复后每次 tick 积累带真实时间戳的条目。
+- **Feedback 重试变量缺失**（commit `4726418`）：orchestrator 中 feedback 变量名与参数名冲突，反馈从未传给 LLM。
+- **LLM #4a JSON 格式不可靠**（Round 1 `1d8b161` → Round 2 `1eac879`）：从 post-processing 兜底改为 slot+verification 机制，通过 `json_format` 校验 + 重试反馈让 LLM 自修正。
+- **LLM #5 也有纯文本输出问题**（commit `87f895f`）：`projection_layer_mask[7]` 未启用 → 静默 0 attr ops。修复后 LLM #5 的 JSON 输出也受 `json_format` 校验保护。
+
+### 已知问题
+
+- **MiniMax 300s 超时**：大分量 prompt（>8KB）偶发 `The read operation timed out`，导致整个 tick 失败（tick_003, tick_010）。
+- **LLM #3 循环重复**：当分量内 NPC 无新事件时，LLM 偶现输出循环。
+- **LLM #4a 位置幻觉**：NPC 本已在目标 zone，LLM #4a 仍生成 zone move ops（因故事叙述「走进酒馆」字面理解）。tick_009 为经典案例。
+- **分量数量不稳定**：4~6 个分量，依赖 NPC 实时位置重新聚类。
+- **LLM 自省 story-graph 不一致**：tick_011 中 LLM 自己写出
