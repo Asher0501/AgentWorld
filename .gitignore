@@ -25,6 +25,12 @@ logs/
 tasks/
 refactor/
 
+# Backup — old images and unused docs
+backup/
+
+# Ad-hoc docs (not version-controlled)
+docs/ADVANCED_CONCEPTS.md
+
 # Scrap/test scripts
 tests/
 test_*.py
@@ -38,3 +44,6 @@ _run_t*.py
 
 # Config overrides
 *.local
+
+# Output directories
+output/
