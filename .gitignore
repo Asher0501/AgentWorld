@@ -1,58 +1,40 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
-*.db
-*.log
-.DS_Store
 
-# Temp & runtime files
+# Data (SQLite DBs generated at runtime)
 data/
+*.db
+
+# OS files
+.DS_Store
 *.swp
 *.swo
 *.swn
+*~
+
+# Run-time output
 /tmp/
 /trace_tick*
 /report_*
-
-# Trace output (generated, not versioned)
 traces_oneshot/
 traces_30tick/
-
-# Logs
+traces/
 logs/
-
-# Internal task docs
 tasks/
+refactor/
 
-# Test & run scripts
+# Scrap/test scripts
 tests/
 test_*.py
-run_*_test.py
-run_*tick*.py
-run_*npc_*.py
-run_minimal_*.py
-run_full_fix*.py
-run_test.sh
-test_tick.sh
 quick_test.py
-p2.sh
+_run_*.py
+_run_t*.py
 
-# Per-tick run outputs
-/tmp/5tick_run/
-
-# IDE & OS
+# IDE
 .idea/
 .vscode/
-*~
 
-# Generated tick archives
-traces/
-
-# Temp test scripts
-_run_*.py
-
-# Backup files
-*.bak
-
-# Temp scripts
-_[a-z]*.py
+# Config overrides
+*.local

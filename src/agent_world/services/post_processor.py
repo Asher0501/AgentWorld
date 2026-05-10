@@ -22,7 +22,7 @@ import logging
 from typing import Any
 
 from .graph_engine import GraphEngine
-from ..config.config_loader import has_role
+from ..config.config_loader import get_all_label_mappings
 from .prompt_assembler import assemble
 
 logger = logging.getLogger("post_processor")
@@ -227,10 +227,9 @@ class PostProcessor:
         for name in known_names:
             if name in story_text:
                 story_names.add(name)
-        # 也保留 zone 和 item（它们不是 NPC 但需要状态上下文）
-        all_ents = graph_engine.all_entities()
-        zone_names = {e.name for e in all_ents if has_role(e.type_id, "region")}
-        item_names = {e.name for e in all_ents if has_role(e.type_id, "thing")}
+        # 也保留 zone 和 item（委托 adapter 按分类获取名称）
+        zone_names = self._adapter.get_names_by_classification("region", graph_engine)
+        item_names = self._adapter.get_names_by_classification("thing", graph_engine)
         active_names = story_names | zone_names | item_names
 
         entities = []
@@ -240,8 +239,8 @@ class PostProcessor:
             if ent and ent.name in active_names:
                 entities.append(ent)
                 active_plans[npc_eid] = npc_plans[npc_eid]
-        # 如果过滤后没有 NPC，回退到全部
-        if not any(has_role(e.type_id, "actor") for e in entities):
+        # 如果过滤后没有 starter，回退到全部
+        if not any(e.is_starter for e in entities):
             entities = [graph_engine.get_entity(eid) for eid in npc_plans if graph_engine.get_entity(eid)]
             active_plans = dict(npc_plans)
 

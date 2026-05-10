@@ -1,0 +1,382 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1200" font-family="'Courier New', monospace">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto" fill="#666">
+      <polygon points="0 0, 10 3.5, 0 7"/>
+    </marker>
+    <marker id="arrow_red" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto" fill="#c62828">
+      <polygon points="0 0, 10 3.5, 0 7"/>
+    </marker>
+    <marker id="arrow_green" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto" fill="#2e7d32">
+      <polygon points="0 0, 10 3.5, 0 7"/>
+    </marker>
+    <marker id="arrow_blue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto" fill="#1565c0">
+      <polygon points="0 0, 10 3.5, 0 7"/>
+    </marker>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="2" dy="2" stdDeviation="2" flood-opacity="0.15"/>
+    </filter>
+    <marker id="arrow_orange" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto" fill="#e65100">
+      <polygon points="0 0, 10 3.5, 0 7"/>
+    </marker>
+  </defs>
+
+  <!-- === Background === -->
+  <rect x="0" y="0" width="1800" height="1200" fill="#f5f5f5" rx="8"/>
+
+  <!-- === Headers === -->
+  <rect x="20" y="15" width="860" height="40" fill="#1565c0" rx="6" opacity="0.1"/>
+  <text x="450" y="42" text-anchor="middle" font-size="18" font-weight="bold" fill="#1565c0">重构前 — 域嵌入在各层</text>
+
+  <rect x="920" y="15" width="860" height="40" fill="#2e7d32" rx="6" opacity="0.1"/>
+  <text x="1350" y="42" text-anchor="middle" font-size="18" font-weight="bold" fill="#2e7d32">重构后 — 域集中在 Adapter</text>
+
+  <!-- <line x1="900" y1="0" x2="900" y2="1200" stroke="#ccc" stroke-width="2" stroke-dasharray="6,4"/> -->
+
+  <!-- ============================================ -->
+  <!-- LEFT SIDE: CURRENT ARCHITECTURE -->
+  <!-- ============================================ -->
+
+  <!-- === Layer 6: Entry === -->
+  <rect x="40" y="75" width="820" height="50" fill="#fff3e0" stroke="#e65100" stroke-width="2" rx="6" filter="url(#shadow)"/>
+  <text x="450" y="106" text-anchor="middle" font-size="14" font-weight="bold" fill="#e65100">入口 run_1tick.py</text>
+  <text x="450" y="118" text-anchor="middle" font-size="10" fill="#e65100">GraphNPCEngine(llm_available=True, ...)</text>
+
+  <!-- Arrow: Entry -> GraphEngine -->
+  <line x1="450" y1="128" x2="450" y2="155" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- === Layer 5: GraphEngine === -->
+  <rect x="40" y="155" width="820" height="95" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2" rx="6" filter="url(#shadow)"/>
+  <text x="450" y="178" text-anchor="middle" font-size="14" font-weight="bold" fill="#2e7d32">图引擎 GraphEngine</text>
+  <text x="450" y="194" text-anchor="middle" font-size="11" fill="#333">register / connect / BFS / subgraph</text>
+  <text x="450" y="211" text-anchor="middle" font-size="11" fill="#c62828">import has_role, get_all_prefixes, prefix_to_type_id</text>
+  <text x="450" y="228" text-anchor="middle" font-size="11" fill="#c62828">_is_item_type() / has_role(...,"region"/"actor"/"fixture")</text>
+  <text x="450" y="242" text-anchor="middle" font-size="10" fill="#999">⚠ 13处域泄漏</text>
+
+  <!-- Arrow: GraphEngine -> Orchestrator -->
+  <line x1="450" y1="253" x2="450" y2="280" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- === Layer 4: Pipeline Orchestrator === -->
+  <rect x="40" y="280" width="820" height="130" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2" rx="6" filter="url(#shadow)"/>
+  <text x="450" y="303" text-anchor="middle" font-size="14" font-weight="bold" fill="#7b1fa2">管线编排 PipelineOrchestrator</text>
+  <text x="450" y="319" text-anchor="middle" font-size="11" fill="#333">run_tick → _build_components → _run_component_full</text>
+
+  <!-- Pipeline stages box -->
+  <rect x="70" y="330" width="760" height="65" fill="#faf5fb" stroke="#ce93d8" rx="4"/>
+  <text x="85" y="348" font-size="11" font-weight="bold" fill="#7b1fa2">硬编码管线阶段:</text>
+
+  <rect x="85" y="355" width="110" height="20" fill="#e1bee7" rx="3"/>
+  <text x="140" y="369" text-anchor="middle" font-size="10" fill="#4a148c">#1 Plan</text>
+  <line x1="198" y1="365" x2="215" y2="365" stroke="#999" stroke-width="1"/>
+
+  <rect x="218" y="355" width="110" height="20" fill="#e1bee7" rx="3"/>
+  <text x="273" y="369" text-anchor="middle" font-size="10" fill="#4a148c">#3 Narrative</text>
+  <line x1="331" y1="365" x2="348" y2="365" stroke="#999" stroke-width="1"/>
+
+  <rect x="351" y="355" width="110" height="20" fill="#e1bee7" rx="3"/>
+  <text x="406" y="369" text-anchor="middle" font-size="10" fill="#4a148c">#4a TopoDelta</text>
+  <line x1="464" y1="365" x2="481" y2="365" stroke="#999" stroke-width="1"/>
+
+  <rect x="484" y="355" width="110" height="20" fill="#e1bee7" rx="3"/>
+  <text x="539" y="369" text-anchor="middle" font-size="10" fill="#4a148c">#5 Projection</text>
+
+  <text x="85" y="388" font-size="9" fill="#c62828">⚠ 域泄漏: _exec_result_dict / _find_zone / _make_eid / has_role×4 / _val_text(mood/sat/vit)</text>
+
+  <!-- Arrow down from Orchestrator to pipeline piece -->
+  <line x1="180" y1="415" x2="180" y2="445" stroke="#666" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <!-- === Pipeline detail boxes (current) === -->
+  <!-- Stage 1: Plan -->
+  <rect x="55" y="445" width="200" height="120" fill="#fff" stroke="#ce93d8" rx="5" filter="url(#shadow)"/>
+  <rect x="55" y="445" width="200" height="22" fill="#7b1fa2" rx="5"/>
+  <text x="155" y="460" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">#1 计划生成 LLM</text>
+  <text x="65" y="480" font-size="9" fill="#c62828">⚠ assemble(mood_text...)</text>
+  <text x="65" y="495" font-size="9" fill="#c62828">⚠ has_role(..., "actor")</text>
+  <text x="65" y="510" font-size="9" fill="#c62828">⚠ has_role(..., "region")</text>
+  <text x="65" y="525" font-size="9" fill="#c62828">⚠ _make_eid("npc",...)</text>
+  <text x="65" y="540" font-size="9" fill="#999">→ ctx.plan_map</text>
+  <text x="65" y="555" font-size="9" fill="#999">→ ctx.npc_info</text>
+
+  <!-- Stage 2: exec_results -->
+  <rect x="280" y="445" width="200" height="120" fill="#fff" stroke="#ce93d8" rx="5" filter="url(#shadow)"/>
+  <rect x="280" y="445" width="200" height="22" fill="#7b1fa2" rx="5"/>
+  <text x="380" y="460" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">上下文构建</text>
+  <text x="290" y="480" font-size="9" fill="#c62828">⚠ _exec_result_dict</text>
+  <text x="290" y="495" font-size="9" fill="#c62828">⚠ npc_name / zone_after</text>
+  <text x="290" y="510" font-size="9" fill="#c62828">⚠ mood_text / satiety_text</text>
+  <text x="290" y="525" font-size="9" fill="#c62828">⚠ _find_zone(ent)</text>
+  <text x="290" y="540" font-size="9" fill="#999">→ comp.exec_results[]</text>
+
+  <!-- Stage 3: Narrative -->
+  <rect x="505" y="445" width="200" height="120" fill="#fff" stroke="#ce93d8" rx="5" filter="url(#shadow)"/>
+  <rect x="505" y="445" width="200" height="22" fill="#7b1fa2" rx="5"/>
+  <text x="605" y="460" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">#3 故事生成 LLM</text>
+  <text x="515" y="480" font-size="9" fill="#c62828">⚠ er["npc_name"] 读域 key</text>
+  <text x="515" y="495" font-size="9" fill="#c62828">⚠ edge_type="npc_zone"</text>
+  <text x="515" y="510" font-size="9" fill="#c62828">⚠ edge_type="npc_npc"</text>
+  <text x="515" y="525" font-size="9" fill="#c62828">⚠ has_role(..., "actor")</text>
+  <text x="515" y="540" font-size="9" fill="#999">→ comp.stories[]</text>
+
+  <!-- Stage 4: Topo delta -->
+  <rect x="55" y="585" width="395" height="120" fill="#fff" stroke="#ce93d8" rx="5" filter="url(#shadow)"/>
+  <rect x="55" y="585" width="395" height="22" fill="#7b1fa2" rx="5"/>
+  <text x="252" y="600" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">#4a 拓扑操作 + 落地</text>
+  <text x="65" y="620" font-size="9" fill="#c62828">⚠ _pp.resolve_topology_changes_async(...)</text>
+  <text x="65" y="635" font-size="9" fill="#c62828">⚠ Verification + Retry loop (max_retries)</text>
+  <text x="65" y="650" font-size="9" fill="#c62828">⚠ adapter.validate_ops(comp.topo_ops)</text>
+  <text x="65" y="665" font-size="9" fill="#c62828">⚠ _make_topo_diff()  recipe consumes/produces 字段</text>
+  <text x="65" y="680" font-size="9" fill="#999">→ 图引擎落地 → comp.topo_diff</text>
+  <text x="65" y="695" font-size="9" fill="#999">→ comp.failures（校验）</text>
+
+  <!-- Stage 5: Projection -->
+  <rect x="475" y="585" width="385" height="120" fill="#fff" stroke="#ce93d8" rx="5" filter="url(#shadow)"/>
+  <rect x="475" y="585" width="385" height="22" fill="#7b1fa2" rx="5"/>
+  <text x="667" y="600" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">#5 状态投影 + 归并</text>
+  <text x="485" y="620" font-size="9" fill="#c62828">⚠ _pp.resolve_projections_async()</text>
+  <text x="485" y="635" font-size="9" fill="#c62828">⚠ Verification + Retry loop</text>
+  <text x="485" y="650" font-size="9" fill="#c62828">⚠ has_recent_info(ent.type_id)</text>
+  <text x="485" y="665" font-size="9" fill="#c62828">⚠ _find_zone(ent) 构建返回</text>
+  <text x="485" y="680" font-size="9" fill="#999">→ _merge_commit_components</text>
+  <text x="485" y="695" font-size="9" fill="#999">→ _apply_final_ops → tick_results</text>
+
+  <!-- === Verification layer (current) === -->
+  <rect x="55" y="725" width="395" height="55" fill="#fff" stroke="#f44336" stroke-width="1.5" rx="5" opacity="0.85"/>
+  <text x="252" y="745" text-anchor="middle" font-size="11" font-weight="bold" fill="#c62828">校验 VerificationLayer / VerificationRegistry</text>
+  <text x="65" y="762" font-size="9" fill="#c62828">⚠ get_all_prefixes() / _strip_prefix() / recipe consumes/produces</text>
+
+  <!-- === Conservation Validator === -->
+  <rect x="475" y="725" width="385" height="55" fill="#fff" stroke="#f44336" stroke-width="1.5" rx="5" opacity="0.85"/>
+  <text x="667" y="745" text-anchor="middle" font-size="11" font-weight="bold" fill="#c62828">ConservationValidator</text>
+  <text x="485" y="762" font-size="9" fill="#c62828">⚠ has_role(ent.type_id, "actor") 硬编码</text>
+
+  <!-- === Interaction Layer badge === -->
+  <rect x="55" y="795" width="200" height="35" fill="#fff" stroke="#f44336" stroke-width="1" rx="4"/>
+  <text x="155" y="817" text-anchor="middle" font-size="10" fill="#c62828">InteractionLayer   ⚠ 15处域key</text>
+
+  <!-- === Intent Executor badge === -->
+  <rect x="280" y="795" width="170" height="35" fill="#fff" stroke="#f44336" stroke-width="1" rx="4"/>
+  <text x="365" y="817" text-anchor="middle" font-size="10" fill="#c62828">IntentExecutor ⚠ 绑定NPCWorld</text>
+
+  <!-- === Post Processor badge === -->
+  <rect x="475" y="795" width="200" height="35" fill="#fff" stroke="#f44336" stroke-width="1" rx="4"/>
+  <text x="575" y="817" text-anchor="middle" font-size="10" fill="#c62828">PostProcessor   ⚠ has_role×3</text>
+
+  <!-- ============================================ -->
+  <!-- RIGHT SIDE: REFACTORED ARCHITECTURE -->
+  <!-- ============================================ -->
+
+  <!-- === Layer 6: Entry === -->
+  <rect x="940" y="75" width="820" height="60" fill="#fff3e0" stroke="#e65100" stroke-width="2" rx="6" filter="url(#shadow)"/>
+  <text x="1350" y="98" text-anchor="middle" font-size="14" font-weight="bold" fill="#e65100">入口 run_1tick.py（唯一域感知点）</text>
+  <text x="1350" y="116" text-anchor="middle" font-size="11" fill="#e65100">adapter = NPCWorldAdapter("domain.json")</text>
+  <text x="1350" y="130" text-anchor="middle" font-size="10" fill="#999">GraphEngine(adapter=adapter) | PipelineOrchestrator(adapter=adapter)</text>
+
+  <!-- Arrow down -->
+  <line x1="1200" y1="138" x2="1200" y2="165" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="1450" y1="138" x2="1450" y2="165" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- === Layer 5: GraphEngine (purified) === -->
+  <rect x="940" y="165" width="390" height="95" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2" rx="6" filter="url(#shadow)"/>
+  <text x="1135" y="188" text-anchor="middle" font-size="14" font-weight="bold" fill="#2e7d32">图引擎 GraphEngine（净化）</text>
+  <text x="1135" y="204" text-anchor="middle" font-size="11" fill="#333">register / connect / BFS / subgraph</text>
+  <text x="1135" y="221" text-anchor="middle" font-size="11" fill="#2e7d32">✓ 只读拓扑标签: is_leaf / no_same_type / is_starter</text>
+  <text x="1135" y="238" text-anchor="middle" font-size="11" fill="#2e7d32">✓ 域委托: adapter.resolve_entity_id / classify_node</text>
+
+  <!-- === Layer 5b: Adapter (new) === -->
+  <rect x="1370" y="165" width="390" height="95" fill="#e3f2fd" stroke="#1565c0" stroke-width="2" rx="6" filter="url(#shadow)"/>
+  <text x="1565" y="188" text-anchor="middle" font-size="14" font-weight="bold" fill="#1565c0">适配器 Adapter（集中）</text>
+  <text x="1565" y="204" text-anchor="middle" font-size="11" fill="#1565c0">get_pipeline_stages() → 阶段列表</text>
+  <text x="1565" y="221" text-anchor="middle" font-size="11" fill="#1565c0">build_entity_context() → opaque dict</text>
+  <text x="1565" y="238" text-anchor="middle" font-size="11" fill="#1565c0">classify_node / resolve_entity_id / extract_location</text>
+
+  <!-- Adapter <-> GraphEngine data flow -->
+  <line x1="1335" y1="212" x2="1365" y2="212" stroke="#1565c0" stroke-width="1" marker-end="url(#arrow_blue)"/>
+  <text x="1350" y="207" text-anchor="end" font-size="8" fill="#1565c0">委托</text>
+
+  <!-- Arrow down -->
+  <line x1="1135" y1="263" x2="1135" y2="290" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="1565" y1="263" x2="1565" y2="290" stroke="#666" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- === Layer 4: Pipeline Orchestrator (generic) === -->
+  <rect x="940" y="290" width="820" height="130" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2" rx="6" filter="url(#shadow)"/>
+  <text x="1350" y="313" text-anchor="middle" font-size="14" font-weight="bold" fill="#7b1fa2">管线编排 PipelineOrchestrator（通用）</text>
+  <text x="1350" y="329" text-anchor="middle" font-size="11" fill="#333">run_tick → build_components → for stage in stages: stage.execute(ctx)</text>
+
+  <!-- Generic stage loop -->
+  <rect x="970" y="340" width="760" height="65" fill="#faf5fb" stroke="#ce93d8" rx="4"/>
+  <text x="985" y="358" font-size="11" font-weight="bold" fill="#7b1fa2">adapter.get_pipeline_stages() 驱动:</text>
+
+  <rect x="985" y="365" width="160" height="20" fill="#e1bee7" rx="3"/>
+  <text x="1065" y="379" text-anchor="middle" font-size="10" fill="#4a148c">stages = adapter.get_pipeline_stages()</text>
+
+  <text x="985" y="398" font-size="10" fill="#2e7d32">✓ for stage in stages:</text>
+  <text x="985" y="412" font-size="10" fill="#2e7d32">✓   result = await stage.execute(ctx, comp, resolver)</text>
+  <text x="985" y="426" font-size="10" fill="#2e7d32">✓   if failure: retry(stage.retry_policy)</text>
+
+  <!-- Arrow down to each stage -->
+  <line x1="1065" y1="425" x2="1065" y2="455" stroke="#7b1fa2" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <!-- === Pipeline detail boxes (refactored) === -->
+  <!-- Current: Stage 1 -->
+  <rect x="940" y="455" width="195" height="135" fill="#fff" stroke="#1565c0" stroke-width="1.5" rx="5" filter="url(#shadow)"/>
+  <rect x="940" y="455" width="195" height="22" fill="#1565c0" rx="5"/>
+  <text x="1037" y="470" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">#1 Plan</text>
+  <text x="950" y="492" font-size="9" fill="#2e7d32">✓ adapter._stage_plan()</text>
+  <text x="950" y="507" font-size="9" fill="#2e7d32">✓ ctx = adapter.build_context()</text>
+  <text x="950" y="522" font-size="9" fill="#2e7d32">✓ classify_node().is_location</text>
+  <text x="950" y="537" font-size="9" fill="#2e7d32">✓ extract_location(entity)</text>
+  <text x="950" y="552" font-size="9" fill="#2e7d32">✓ resolve_entity_id(name)</text>
+  <text x="950" y="567" font-size="9" fill="#999">→ plan_map</text>
+
+  <line x1="1138" y1="522" x2="1155" y2="522" stroke="#999" stroke-width="1"/>
+
+  <!-- After: Stage 2 -->
+  <rect x="1158" y="455" width="195" height="135" fill="#fff" stroke="#1565c0" stroke-width="1.5" rx="5" filter="url(#shadow)"/>
+  <rect x="1158" y="455" width="195" height="22" fill="#1565c0" rx="5"/>
+  <text x="1255" y="470" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">#3 Narrative</text>
+  <text x="1168" y="492" font-size="9" fill="#2e7d32">✓ adapter._stage_narrative()</text>
+  <text x="1168" y="507" font-size="9" fill="#2e7d32">✓ er.get("_entity_name")</text>
+  <text x="1168" y="522" font-size="9" fill="#2e7d32">✓ er.get("_location")</text>
+  <text x="1168" y="537" font-size="9" fill="#2e7d32">✓ er.get("_edge_type")</text>
+  <text x="1168" y="552" font-size="9" fill="#2e7d32">✓ classify_node().is_actor</text>
+  <text x="1168" y="567" font-size="9" fill="#999">→ stories</text>
+
+  <line x1="1356" y1="522" x2="1373" y2="522" stroke="#999" stroke-width="1"/>
+
+  <!-- After: Stage 3 -->
+  <rect x="1376" y="455" width="195" height="135" fill="#fff" stroke="#1565c0" stroke-width="1.5" rx="5" filter="url(#shadow)"/>
+  <rect x="1376" y="455" width="195" height="22" fill="#1565c0" rx="5"/>
+  <text x="1473" y="470" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">#4a Topo</text>
+  <text x="1386" y="492" font-size="9" fill="#2e7d32">✓ adapter._stage_topo()</text>
+  <text x="1386" y="507" font-size="9" fill="#2e7d32">✓ stage.validate + retry</text>
+  <text x="1386" y="522" font-size="9" fill="#2e7d32">✓ adapter.parse_llm_output()</text>
+  <text x="1386" y="537" font-size="9" fill="#2e7d32">✓ adapter.normalize_name()</text>
+  <text x="1386" y="552" font-size="9" fill="#2e7d32">✓ adapter.extract_op_refs()</text>
+  <text x="1386" y="567" font-size="9" fill="#999">→ topo_ops</text>
+
+  <line x1="1574" y1="522" x2="1591" y2="522" stroke="#999" stroke-width="1"/>
+
+  <!-- After: Stage 4 -->
+  <rect x="1594" y="455" width="166" height="135" fill="#fff" stroke="#1565c0" stroke-width="1.5" rx="5" filter="url(#shadow)"/>
+  <rect x="1594" y="455" width="166" height="22" fill="#1565c0" rx="5"/>
+  <text x="1677" y="470" text-anchor="middle" font-size="11" font-weight="bold" fill="#fff">#5 Proj</text>
+  <text x="1604" y="492" font-size="9" fill="#2e7d32">✓ adapter._stage_proj()</text>
+  <text x="1604" y="507" font-size="9" fill="#2e7d32">✓ stage.validate + retry</text>
+  <text x="1604" y="522" font-size="9" fill="#2e7d32">✓ classify_node().is_actor</text>
+  <text x="1604" y="537" font-size="9" fill="#2e7d32">✓ format_attributes()</text>
+  <text x="1604" y="552" font-size="9" fill="#2e7d32">✓ merge_results()</text>
+  <text x="1604" y="567" font-size="9" fill="#999">→ attr_ops+ri</text>
+
+  <!-- === Verification layer (refactored) === -->
+  <rect x="940" y="610" width="395" height="55" fill="#fff" stroke="#2e7d32" stroke-width="1.5" rx="5"/>
+  <text x="1137" y="630" text-anchor="middle" font-size="11" font-weight="bold" fill="#2e7d32">校验层 VerificationLayer（净化）</text>
+  <text x="950" y="648" font-size="9" fill="#2e7d32">✓ adapter.normalize_name() / classify_node() / extract_op_refs()</text>
+
+  <!-- === Conservation Validator (refactored) === -->
+  <rect x="1365" y="610" width="395" height="55" fill="#fff" stroke="#2e7d32" stroke-width="1.5" rx="5"/>
+  <text x="1562" y="630" text-anchor="middle" font-size="11" font-weight="bold" fill="#2e7d32">ConservationValidator（净化）</text>
+  <text x="1375" y="648" font-size="9" fill="#2e7d32">✓ adapter.classify_node().is_actor</text>
+
+  <!-- === Service modules now called by adapter === -->
+  <rect x="940" y="680" width="820" height="45" fill="#fff" stroke="#1565c0" stroke-width="1" rx="4" stroke-dasharray="4,3"/>
+  <text x="1350" y="700" text-anchor="middle" font-size="11" fill="#1565c0">InteractionLayer / PostProcessor / IntentExecutor — 由 adapter stage execute 内部调用</text>
+  <text x="1350" y="716" text-anchor="middle" font-size="9" fill="#999">管线不直接 import，通过 adapter stage 封装调用</text>
+
+  <!-- === Config layer === -->
+  <rect x="940" y="750" width="820" height="90" fill="#f5f5f5" stroke="#999" stroke-width="1.5" rx="6" stroke-dasharray="6,3"/>
+  <text x="1350" y="772" text-anchor="middle" font-size="13" font-weight="bold" fill="#555">配置层（不改）</text>
+
+  <rect x="960" y="783" width="240" height="45" fill="#fff" stroke="#aaa" rx="4"/>
+  <text x="1080" y="802" text-anchor="middle" font-size="10" fill="#333">node_config.json</text>
+  <text x="1080" y="817" text-anchor="middle" font-size="9" fill="#666">拓扑标签（terminal/no_same_type/bfs_starter）</text>
+
+  <rect x="1230" y="783" width="240" height="45" fill="#fff" stroke="#aaa" rx="4"/>
+  <text x="1350" y="802" text-anchor="middle" font-size="10" fill="#333">domain.json</text>
+  <text x="1350" y="817" text-anchor="middle" font-size="9" fill="#666">域文本 / 校验 mask / 阶段定义</text>
+
+  <rect x="1500" y="783" width="240" height="45" fill="#fff" stroke="#aaa" rx="4"/>
+  <text x="1620" y="802" text-anchor="middle" font-size="10" fill="#333">config_loader.py</text>
+  <text x="1620" y="817" text-anchor="middle" font-size="9" fill="#666">编译标签 + 域无关工具函数</text>
+
+  <!-- === Entity layer === -->
+  <rect x="940" y="860" width="820" height="45" fill="#f5f5f5" stroke="#999" stroke-width="1.5" rx="6" stroke-dasharray="6,3"/>
+  <text x="1350" y="882" text-anchor="middle" font-size="13" font-weight="bold" fill="#555">实体层（不改）</text>
+  <text x="1350" y="898" text-anchor="middle" font-size="10" fill="#666">Entity: type_id / is_leaf / no_same_type / is_starter(is_bfs_starter) / is_component_anchor</text>
+
+  <!-- === Data flow arrows across === -->
+  <!-- Adapter provides stages to Orchestrator -->
+  <path d="M 1565 262 L 1565 280 L 1350 280 L 1350 290" fill="none" stroke="#1565c0" stroke-width="1.5" marker-end="url(#arrow_blue)"/>
+  <text x="1480" y="275" font-size="9" fill="#1565c0">stages</text>
+
+  <!-- Adapter provides entity context to Orchestrator -->
+  <path d="M 1565 230 L 1670 230 L 1670 290 L 1540 290" fill="none" stroke="#1565c0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow_blue)"/>
+  <text x="1690" y="260" font-size="8" fill="#1565c0">build_entity_context()</text>
+
+  <!-- Verification uses adapter -->
+  <path d="M 1565 213 L 1650 213 L 1650 638 L 1760 638" fill="none" stroke="#1565c0" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow_blue)"/>
+  <text x="1700" y="420" font-size="8" fill="#1565c0">normalize_name</text>
+  <text x="1700" y="432" font-size="8" fill="#1565c0">classify_node</text>
+
+  <!-- === Title === -->
+  <text x="1350" y="960" text-anchor="middle" font-size="13" font-weight="bold" fill="#333">数据流：run_1tick.py → GraphEngine → PipelineOrchestrator → adapter stage loop → 结果归并</text>
+
+  <!-- === Data flow === -->
+  <rect x="960" y="975" width="780" height="100" fill="#fafafa" stroke="#ccc" rx="6"/>
+
+  <!-- Data flow boxes -->
+  <rect x="975" y="985" width="100" height="22" fill="#e3f2fd" rx="3"/>
+  <text x="1025" y="1000" text-anchor="middle" font-size="9" fill="#1565c0">Config</text>
+  <line x1="1078" y1="996" x2="1095" y2="996" stroke="#999" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="1098" y="985" width="100" height="22" fill="#e8f5e9" rx="3"/>
+  <text x="1148" y="1000" text-anchor="middle" font-size="9" fill="#2e7d32">Entity</text>
+  <line x1="1201" y1="996" x2="1218" y2="996" stroke="#999" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="1221" y="985" width="100" height="22" fill="#e8f5e9" rx="3"/>
+  <text x="1271" y="1000" text-anchor="middle" font-size="9" fill="#2e7d32">Graph</text>
+  <line x1="1324" y1="996" x2="1341" y2="996" stroke="#999" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="1344" y="985" width="100" height="22" fill="#e3f2fd" rx="3"/>
+  <text x="1394" y="1000" text-anchor="middle" font-size="9" fill="#1565c0">Adapter</text>
+  <line x1="1447" y1="996" x2="1464" y2="996" stroke="#999" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="1467" y="985" width="120" height="22" fill="#f3e5f5" rx="3"/>
+  <text x="1527" y="1000" text-anchor="middle" font-size="9" fill="#7b1fa2">Pipeline</text>
+  <line x1="1590" y1="996" x2="1607" y2="996" stroke="#999" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="1610" y="985" width="110" height="22" fill="#f5f5f5" rx="3"/>
+  <text x="1665" y="1000" text-anchor="middle" font-size="9" fill="#555">DB/结果</text>
+
+  <text x="1350" y="1030" text-anchor="middle" font-size="10" fill="#666">数据: components → plan_map → exec_results → stories → topo_ops → attr_ops → recent_info → tick_results</text>
+  <text x="1350" y="1046" text-anchor="middle" font-size="10" fill="#666">检查: VerificationLayer.check_all() → Failure[] → build_feedback() → 重试(adapter retry_policy)</text>
+  <text x="1350" y="1062" text-anchor="middle" font-size="10" fill="#666">注入方向:  run_1tick.py → 实例化 adapter → 注入 GraphEngine + PipelineOrchestrator</text>
+
+  <!-- ============================================ -->
+  <!-- Legend -->
+  <!-- ============================================ -->
+  <rect x="40" y="870" width="820" height="100" fill="#fafafa" stroke="#ddd" rx="6"/>
+  <text x="60" y="893" font-size="13" font-weight="bold" fill="#333">图例（左：当前 ／ 右：重构后）</text>
+
+  <rect x="60" y="905" width="12" height="12" fill="#f44336" rx="2"/>
+  <text x="78" y="915" font-size="10" fill="#c62828">域泄漏点</text>
+
+  <rect x="180" y="905" width="12" height="12" fill="#2e7d32" rx="2"/>
+  <text x="198" y="915" font-size="10" fill="#2e7d32">净化成功</text>
+
+  <rect x="310" y="905" width="12" height="12" fill="#1565c0" rx="2"/>
+  <text x="328" y="915" font-size="10" fill="#1565c0">Adapter 集中域逻辑</text>
+
+  <rect x="510" y="905" width="12" height="12" fill="#e3f2fd" stroke="#1565c0" rx="2"/>
+  <text x="528" y="915" font-size="10" fill="#333">Adapter 域数据</text>
+
+  <rect x="60" y="930" width="12" height="12" fill="#f3e5f5" stroke="#7b1fa2" rx="2"/>
+  <text x="78" y="940" font-size="10" fill="#333">管线通用编排</text>
+
+  <rect x="220" y="930" width="12" height="12" fill="#e8f5e9" stroke="#2e7d32" rx="2"/>
+  <text x="238" y="940" font-size="10" fill="#333">图引擎纯拓扑</text>
+
+  <rect x="380" y="930" width="12" height="12" fill="#fff3e0" stroke="#e65100" rx="2"/>
+  <text x="398" y="940" font-size="10" fill="#e65100">入口层（域感知点）</text>
+
+  <text x="60" y="958" font-size="10" fill="#666">箭头方向: 数据流 (→) / 委托 (·→) / 注释 (−)</text>
+
+</svg>

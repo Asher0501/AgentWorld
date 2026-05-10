@@ -12,19 +12,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from ..domain.adapter import (
     DomainAdapter, GraphOp, StateChange,
-    StageOutputType, PipelineStage, NodeDescriptor,
+    StageOutputType, PipelineStage, RetryPolicy,
 )
-from .pipeline_engine import PipelineEngine, StageResult
+from .pipeline_engine import PipelineEngine
 from .post_processor import PostProcessor as _PostProcessor
 from .interaction_layer import InteractionLayer as _InteractionLayer
 from .verification_layer import VerificationLayer as _VerificationLayer
 from .graph_engine import TopoComponent
-from ..config.config_loader import has_role, get_verification_config
+from ..config.config_loader import get_verification_config
 
 logger = logging.getLogger("PipelineOrchestrator")
 
@@ -158,43 +157,20 @@ class PipelineOrchestrator:
 
     # ═══════════════════════════════════════════
 
-    def _exec_result_dict(self, info, neid, zone, plan, interacted, ent):
-        attrs = ent.attributes if ent else {}
-        traits = ent.traits if ent and hasattr(ent, 'traits') else []
+    def _build_exec_result(self, info, neid: str, plan: str):
+        """使用 adapter 构建执行上下文。"""
+        ent = info.get("entity")
         model = info.get("model")
-        mem_text = model.attributes.get("_recent_info", "") if model and hasattr(model, 'attributes') else ""
-
-        interacted_npcs = [n for n in interacted
-                           if self.graph_engine.get_entity(f"npc_{n[:8]}") is not None]
-        interacted_objects = [n for n in interacted
-                              if self.graph_engine.get_entity(f"object_{n[:8]}") is not None]
-
-        return {
-            "npc_name": info["name"],
-            "npc_eid": neid,
-            "npc_role": info["entity"].role if info.get("entity") else "?",
-            "npc_id": info["model"].id if info.get("model") else "",
-            "zone_after": zone,
-            "zone_changed": False,
-            "interacted_npcs": interacted_npcs,
-            "interacted_objects": interacted_objects,
-            "raw_intent": plan,
+        extras = {
+            "plan": plan,
             "narrative": "",
-            "memories": mem_text,
-            "mood_text": self._val_text(attrs.get("mood"), _MOOD),
-            "satiety_text": self._val_text(attrs.get("satiety"), _SAT),
-            "vitality_text": self._val_text(attrs.get("vitality"), _VIT),
-            "traits": traits,
+            "memories": model.attributes.get("_recent_info", "") if model and hasattr(model, 'attributes') else "",
         }
+        return self.adapter.build_entity_context(neid, self.graph_engine, **extras)
 
-    def _find_zone(self, ent) -> str:
-        if not ent:
-            return "?"
-        for conn in ent.connected_entity_ids:
-            e = self.graph_engine.get_entity(conn)
-            if e and has_role(e.type_id, "region"):
-                return e.name
-        return "?"
+    def _find_entity_zone(self, eid: str) -> str:
+        """使用 adapter 查找实体位置。"""
+        return self.adapter.extract_location(eid, self.graph_engine)
 
     # ═══════════════════════════════════════════
 
@@ -217,6 +193,19 @@ class PipelineOrchestrator:
         logger.info(f"[分量 {comp.id}] LLM #3: {len(edge_results)} 条边 → "
                      f"{len(stories)} 个唯一故事")
         return stories
+
+    def _build_comp_exec_results(self, ctx: PipelineContext, comp: TopoComponent):
+        """为分量内的每个 NPC 构建 exec_result。"""
+        for neid in comp.npc_eids:
+            if neid not in ctx.plan_map:
+                continue
+            info = ctx.npc_info.get(neid)
+            if not info:
+                continue
+            er = self._build_exec_result(
+                info, neid, ctx.plan_map[neid],
+            )
+            comp.exec_results.append(er)
 
     # ═══════════════════════════════════════════
     # Step 4.5: 连通分量分割
@@ -275,12 +264,13 @@ class PipelineOrchestrator:
                 if hasattr(tag, 'tag'):
                     personality_tags.append(tag.tag)
 
+            # 使用拓扑标签（is_component_anchor / is_starter）替代 has_role
             zone_npcs = []
             for conn in ent.connected_entity_ids:
                 e = self.graph_engine.get_entity(conn)
-                if e and has_role(e.type_id, "region"):
+                if e and e.is_component_anchor:
                     for other_ent in self.graph_engine.all_entities():
-                        if has_role(other_ent.type_id, "actor") and other_ent != ent \
+                        if other_ent.is_starter and other_ent != ent \
                            and other_ent.is_connected_to(e.entity_id):
                             zone_npcs.append({"name": other_ent.name, "role": other_ent.role or "?"})
                     break
@@ -319,77 +309,92 @@ class PipelineOrchestrator:
                 ent = info.get("entity")
                 zone_name = "?"
                 if ent:
-                    for conn in ent.connected_entity_ids:
-                        e = self.graph_engine.get_entity(conn)
-                        if e and has_role(e.type_id, "region"):
-                            zone_name = e.name
-                            break
+                    zone_name = self._find_entity_zone(ent.entity_id)
                 ctx.plan_map[neid] = f"我在{zone_name}看看有什么可以做的。"
 
     # ═══════════════════════════════════════════
     # Step 2.2: 完整分量管线
     # ═══════════════════════════════════════════
 
+    # ═══════════════════════════════════════════
+    # 阶段分发表 — adapter 声明阶段，orchestrator 调度
+    # ═══════════════════════════════════════════
+
+    _STAGE_HANDLERS: dict[str, str] = {
+        # LLM #1 — 计划生成（per-component npcs）
+        "plan": "_run_handler_stage_plan",
+        # LLM #2 — 连通结构标注（全局，不在分量内运行）
+        "topo_structure": "_noop",
+        # LLM #3 — 故事生成（per-component）
+        "narrative": "_run_handler_stage_narrative",
+        # LLM #4a — 拓扑执行（per-component，含校验+重试+落地）
+        "topo_delta": "_run_handler_stage_topo",
+        # LLM #5 — 属性投影（per-component，含校验+重试+归并）
+        "content_update": "_run_handler_stage_projection",
+    }
+
     async def _run_component_full(
         self, ctx: PipelineContext, comp: TopoComponent, npcs: list
     ):
         """
-        单个分量的全流程：LLM #1（计划）→ exec_results → LLM #3 → LLM #4a → LLM #5。
+        单个分量的全流程：按 adapter.get_pipeline_stages() 顺序执行。
         """
-        # LLM #1 — 只针对本分量 NPC
+        stages = self.adapter.get_pipeline_stages()
+        for stage in stages:
+            # 每个 stage 提取当前分量级数据
+            comp_plans = {eid: ctx.plan_map[eid]
+                          for eid in comp.npc_eids if eid in ctx.plan_map}
+            comp_stories = comp.stories or []
+
+            handler = self._STAGE_HANDLERS.get(stage.key)
+            if handler is None or handler == "_noop":
+                continue
+
+            if stage.key == "plan":
+                await getattr(self, handler)(comp, npcs, ctx)
+                # plan 后检查是否有计划，无则跳过
+                if not {eid for eid in comp.npc_eids if eid in ctx.plan_map}:
+                    return
+                # 构建 exec_results 供后续阶段使用
+                self._build_comp_exec_results(ctx, comp)
+            else:
+                await getattr(self, handler)(ctx, comp, comp_plans, comp_stories, stage)
+
+    # ═══════════════════════════════════════════
+    # 阶段处理器
+    # ═══════════════════════════════════════════
+
+    async def _run_handler_stage_plan(
+        self, comp: TopoComponent, npcs: list, ctx: PipelineContext
+    ):
+        """LLM #1 — 计划生成（适配器声明此阶段）。"""
         await self._run_stage_plan_for_component(comp, npcs, ctx)
 
-        # 如果分量内所有 NPC 都没生成计划，跳过
-        comp_plan_map = {eid: ctx.plan_map[eid] for eid in comp.npc_eids if eid in ctx.plan_map}
-        if not comp_plan_map:
-            return
-
-        # 生成 exec_results（分量内 NPC 专属）
-        for neid in comp.npc_eids:
-            if neid not in ctx.plan_map:
-                continue
-            info = ctx.npc_info.get(neid)
-            if not info:
-                continue
-            ent = info["entity"]
-            zone_name = self._find_zone(ent)
-            er = self._exec_result_dict(
-                info, neid, zone_name, ctx.plan_map[neid], [], ent,
-            )
-            comp.exec_results.append(er)
-
+    async def _run_handler_stage_narrative(
+        self, ctx: PipelineContext, comp: TopoComponent,
+        comp_plans: dict, comp_stories: list, stage: PipelineStage
+    ):
+        """LLM #3 — 故事生成。"""
         if not comp.exec_results:
             return
-
-        # LLM #3 → LLM #4a → LLM #4b （沿用现有 _run_one_component 逻辑）
-        await self._run_one_component(ctx, comp)
-
-    # ═══════════════════════════════════════════
-    # Step 4.6: 单分量管线（#3 → #4a → #5）
-    # ═══════════════════════════════════════════
-
-    async def _run_one_component(self, ctx: PipelineContext, comp: TopoComponent):
-        """
-        执行单个连通分量的完整管线：#3 → #4(拓扑执行) → 落地 → #5(状态投影)。
-        两阶段各自独立校验/重试，互不影响。
-        """
-        from .verification_layer import _TOPOLOGY_CHECK_MASK, _PROJECTION_CHECK_MASK
-        max_retries = get_verification_config("max_retries", 1)
-
-        # LLM #3 for this component（异步）
         comp.stories = await self._stage_narrative_component(ctx, comp)
 
-        # 筛选本分量的 npc_plans
-        comp_plans = {eid: ctx.plan_map[eid] for eid in comp.npc_eids if eid in ctx.plan_map}
+    async def _run_handler_stage_topo(
+        self, ctx: PipelineContext, comp: TopoComponent,
+        comp_plans: dict, comp_stories: list, stage: PipelineStage
+    ):
+        """LLM #4a — 拓扑执行（含校验+重试+落地）。"""
+        from .verification_layer import _TOPOLOGY_CHECK_MASK
+        max_retries = get_verification_config("max_retries", 1)
 
-        # ═══════════════════════════════════════════
-        # Phase 1: LLM #4 — 拓扑执行
-        # ═══════════════════════════════════════════
+        if not comp_plans:
+            return
+
         feedback_topo = ""
         for attempt in range(max_retries + 1):
             comp.topo_ops = await self._pp.resolve_topology_changes_async(
                 npc_plans=comp_plans,
-                stories=comp.stories,
+                stories=comp_stories,
                 graph_engine=self.graph_engine,
                 world_time_str=ctx.world_time_str,
                 tick_duration_str=ctx.tick_duration_str,
@@ -399,9 +404,8 @@ class PipelineOrchestrator:
             )
             logger.info(f"[分量 {comp.id}] LLM #4: {len(comp.topo_ops)} 个拓扑操作")
 
-            # 只校验拓扑操作（json_format / entity_existence / capacity_upper_bound / degree_conservation）
             comp.failures = self._vl.check_all(
-                comp.stories, comp.topo_ops, [], {},
+                comp_stories, comp.topo_ops, [], {},
                 mask=_TOPOLOGY_CHECK_MASK,
                 raw_llm_output=getattr(self._pp, "_last_raw_topo_response", ""),
             )
@@ -422,7 +426,7 @@ class PipelineOrchestrator:
             logger.warning(f"[分量 {comp.id}] 拓扑校验失败 ({len(comp.failures)} 项)，"
                            f"重试 #{attempt + 2}")
 
-        # 降级(conserve) + 立即落地拓扑
+        # 降级 + 落地拓扑
         if comp.topo_ops:
             filtered = self.adapter.validate_ops(comp.topo_ops, self.graph_engine)
             removed = len(comp.topo_ops) - len(filtered)
@@ -434,17 +438,25 @@ class PipelineOrchestrator:
             for err in (r.get("errors") or []):
                 logger.warning(f"[分量 {comp.id}]   落地错误: {err}")
 
-        # 生成 topo_diff — 落地拓扑的变化摘要
+        # 生成 topo_diff
         comp.topo_diff = self._make_topo_diff(comp.topo_ops)
 
-        # ═══════════════════════════════════════════
-        # Phase 2: LLM #5 — 状态投影 (attr + recent_info)
-        # ═══════════════════════════════════════════
+    async def _run_handler_stage_projection(
+        self, ctx: PipelineContext, comp: TopoComponent,
+        comp_plans: dict, comp_stories: list, stage: PipelineStage
+    ):
+        """LLM #5 — 状态投影（含校验+重试）。"""
+        from .verification_layer import _PROJECTION_CHECK_MASK
+        max_retries = get_verification_config("max_retries", 1)
+
+        if not comp_plans:
+            return
+
         feedback_proj = ""
         for attempt in range(max_retries + 1):
             comp.attr_ops, comp.recent_info = await self._pp.resolve_projections_async(
                 npc_plans=comp_plans,
-                stories=comp.stories,
+                stories=comp_stories,
                 graph_engine=self.graph_engine,
                 topo_diff=comp.topo_diff,
                 world_time_str=ctx.world_time_str,
@@ -454,9 +466,8 @@ class PipelineOrchestrator:
             logger.info(f"[分量 {comp.id}] LLM #5: {len(comp.attr_ops)} attr, "
                          f"{len(comp.recent_info)} ri")
 
-            # 只校验 attr + recent_info（skip degree_conservation）
             comp.failures = self._vl.check_all(
-                comp.stories, [], comp.attr_ops, comp.recent_info,
+                comp_stories, [], comp.attr_ops, comp.recent_info,
                 mask=_PROJECTION_CHECK_MASK,
                 raw_llm_output=getattr(self._pp, "_last_raw_attr_response", ""),
             )
@@ -551,8 +562,25 @@ class PipelineOrchestrator:
                             history = []
                     if not isinstance(history, list):
                         history = []
+                    # 插入最新条目
                     history.insert(0, {"t": ctx.world_time_str, "text": txt})
-                    history = history[:10]
+
+                    # 容量上限 4，最老条自动融合
+                    MAX_RI = 4
+                    if len(history) > MAX_RI:
+                        # 保留最新的 3 条正常条目
+                        keep_n = MAX_RI - 1
+                        kept = history[:keep_n]
+                        # 最老的 (len - keep_n) 条融合为一条综合记录
+                        fused_text = " | ".join(
+                            e["text"] for e in history[keep_n:]
+                        )
+                        # 附带 primary_goal 上下文
+                        pg = (ent.attributes or {}).get("primary_goal", "")
+                        prefix = f"【目标:{pg}】" if pg else ""
+                        fused = {"t": "综合", "text": f"{prefix} {fused_text}".strip()}
+                        history = kept + [fused]
+                    history = history[:MAX_RI]
                     ent.recent_info = _json.dumps(history, ensure_ascii=False)
                     w += 1
             if w:
@@ -571,18 +599,21 @@ class PipelineOrchestrator:
     def _build_tick_results(self, ctx: PipelineContext) -> list[dict]:
         results = []
         for er in ctx.exec_results:
-            neid = er.get("npc_eid", "")
-            name = er.get("npc_name", "?")
+            neid = er.get("_entity_id", er.get("npc_eid", ""))
+            name = er.get("_entity_name", er.get("npc_name", "?"))
             ent = self.graph_engine.get_entity(neid)
             zone_now, vit_now, inv = "?", 100, {}
             if ent:
-                zone_now = self._find_zone(ent)
+                zone_now = er.get("_location", self._find_entity_zone(ent.entity_id))
                 vit_now = int(ent.attributes.get("vitality", 100))
                 inv = {iv["item_name"]: iv["quantity"]
                        for iv in self.graph_engine.get_inventory_view(neid)}
+            info = ctx.npc_info.get(neid, {})
+            model = info.get("model")
+            npc_id = str(model.id) if model and hasattr(model, 'id') else ""
             plan_text = ctx.plan_map.get(neid, name)
             results.append({
-                "npc_id": er.get("npc_id", ""),
+                "npc_id": npc_id,
                 "npc_name": name,
                 "zone": zone_now,
                 "action": plan_text[:50],
@@ -597,18 +628,4 @@ class PipelineOrchestrator:
     # 帮助
     # ═══════════════════════════════════════════
 
-    def _val_text(self, val, labels):
-        if val is None:
-            return "未知"
-        if val < 30:
-            return labels[0]
-        if val < 50:
-            return labels[1]
-        if val < 70:
-            return labels[2]
-        return labels[3]
 
-
-_MOOD = ("很低落", "有点低落", "一般", "不错")
-_SAT = ("很饿", "有点饿", "还行", "吃饱了")
-_VIT = ("很疲惫", "有些累", "还行", "精力充沛")

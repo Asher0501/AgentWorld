@@ -221,6 +221,23 @@ class InteractionResolver:
         max_retries = 2
         for attempt in range(max_retries + 1):
             try:
+                # HOOK C: pre_retry 自适应
+                # 主调用给 180s（覆盖大多数正常响应），超时后递降输出量
+                if attempt == 0:
+                    call_timeout = 180.0
+                    call_max_tokens = 8000
+                    call_temp = temperature if temperature is not None else self.temperature
+                elif attempt == 1:
+                    call_timeout = 120.0
+                    call_max_tokens = 3000
+                    call_temp = 0.7 if temperature is None else min(temperature + 0.2, 1.0)
+                    logger.info(f"[重试 #1] 自适应降量: timeout={call_timeout}s max_tokens={call_max_tokens} temp={call_temp}")
+                else:
+                    call_timeout = 120.0
+                    call_max_tokens = 2000
+                    call_temp = 0.8
+                    logger.info(f"[重试 #2] 极端降量: timeout={call_timeout}s max_tokens={call_max_tokens} temp={call_temp}")
+
                 with httpx.Client(
                     base_url=self.base_url,
                     headers={
@@ -229,16 +246,15 @@ class InteractionResolver:
                         "anthropic-dangerous-direct-browser-access": "true",
                         "Content-Type": "application/json",
                     },
-                    timeout=300.0,
+                    timeout=call_timeout,
                 ) as client:
                     sp = system_prompt if system_prompt is not None else self._default_system_prompt()
-                    temp = temperature if temperature is not None else self.temperature
                     response = client.post(
                         "/v1/messages",
                         json={
                             "model": self.model,
-                            "max_tokens": 8000,
-                            "temperature": temp,
+                            "max_tokens": call_max_tokens,
+                            "temperature": call_temp,
                             "system": sp,
                             "messages": [
                                 {"role": "user", "content": prompt},

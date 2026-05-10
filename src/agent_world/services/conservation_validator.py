@@ -15,7 +15,7 @@ from enum import Enum
 from typing import Any
 
 from .graph_engine import GraphEngine
-from ..config.config_loader import has_role
+
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,7 @@ class ConservationValidator:
                 if not src or not tgt:
                     continue
                 ent = self._graph.get_entity(src)
-                if not ent or not has_role(ent.type_id, "actor"):
+                if not ent or not ent.is_starter:
                     continue
                 if not self._graph.is_conserved(tgt):
                     continue

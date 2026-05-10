@@ -21,7 +21,6 @@ import time
 from typing import Callable
 
 from ..db import NodeDB, get_session, node_to_npc
-from ..entities.manager import get_entity_manager, init_entity_manager
 from ..models.npc import NPC, Position
 from ..models.world import WorldTime
 
@@ -30,7 +29,7 @@ from ..config.config_loader import has_role
 from .graph_engine import GraphEngine
 from .graph_adapter import build_world_graph, build_graph_from_nodes, sync_graph_to_nodes, sync_entity_to_db, _make_eid
 from .interaction_resolver import InteractionResolver
-from ..domain.npc_world.adapter import NPCWorldAdapter
+from ..domain.npc_world.adapter import NPCWorldAdapter as _DefaultAdapter
 from .pipeline_orchestrator import PipelineOrchestrator
 
 
@@ -57,7 +56,7 @@ class GraphNPCEngine:
 
     def __init__(self, llm_available: bool = False, llm_callback=None,
                  llm_model: str | None = None, llm_temperature: float = 0.7,
-                 small: bool = False):
+                 small: bool = False, adapter=None):
         self.llm_available = llm_available
         self.llm_callback = llm_callback
         self._llm_model = llm_model
@@ -72,7 +71,7 @@ class GraphNPCEngine:
         self._current_world_time_str = ""
         self._current_time_of_day = ""
         self._tick_duration_str = ""
-        self._adapter = NPCWorldAdapter()
+        self._adapter = adapter or _DefaultAdapter()
         self._io_dir = ""
         self._pending_new_entities: list = []  # LLM 自动注册的新实体缓冲
 
@@ -99,7 +98,6 @@ class GraphNPCEngine:
             return
         from ..config.config_loader import build_zone_models
         zones = build_zone_models()
-        init_entity_manager(zones)
 
         with get_session() as conn:
             node_db = NodeDB(conn)

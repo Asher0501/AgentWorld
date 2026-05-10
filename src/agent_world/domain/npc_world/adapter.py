@@ -1278,6 +1278,168 @@ class NPCWorldAdapter(DomainAdapter):
                     valid_ops.append({"op": "set_qty", "src": real_src, "tgt": real_tgt, "qty": qty})
         return valid_ops
 
+    # ═══════════════════════════════════════════════
+    # 域净化重构 v2 — 新增方法
+    # ═══════════════════════════════════════════════
+
+    def build_entity_context(self, entity_id: str, graph, **extras) -> dict:
+        """
+        为实体构建执行上下文（opaque dict）。
+        管线只读 _ 前缀的隐式契约 key。
+        隐式契约: _entity_name, _entity_id, _location, _location_changed,
+                  _edge_type, _interacted_entities
+        """
+        ent = graph.get_entity(entity_id) if graph else None
+        attrs = ent.attributes if ent else {}
+        traits = ent.traits if ent and hasattr(ent, 'traits') else []
+
+        name = ent.name if ent else entity_id.split('_', 1)[-1]
+        location = self.extract_location(entity_id, graph)
+
+        # 格式化的域属性文本
+        mood_text = self.format_attribute("mood", attrs.get("mood"))
+        satiety_text = self.format_attribute("satiety", attrs.get("satiety"))
+        vitality_text = self.format_attribute("vitality", attrs.get("vitality"))
+
+        # 从 extras 提取 interacted 列表
+        interacted = extras.get("interacted", [])
+        interacted_npcs = [
+            n for n in interacted
+            if graph and graph.get_entity(self.resolve_entity_id(n, "npc"))
+        ]
+        interacted_objects = [
+            n for n in interacted
+            if graph and graph.get_entity(self.resolve_entity_id(n, "obj"))
+        ]
+
+        result = {
+            # 隐式契约（管线可读）
+            "_entity_name": name,
+            "_entity_id": entity_id,
+            "_location": location,
+            "_location_changed": extras.get("location_changed", False),
+            "_edge_type": extras.get("edge_type", "actor_actor"),
+            "_interacted_entities": interacted_npcs + interacted_objects,
+
+            # 域私有（adapter 自己用）
+            "npc_name": name,
+            "npc_eid": entity_id,
+            "npc_role": ent.role if ent else "?",
+            "zone_after": location,
+            "zone_before": extras.get("zone_before", location),
+            "zone_changed": extras.get("location_changed", False),
+            "interacted_npcs": interacted_npcs,
+            "interacted_objects": interacted_objects,
+            "raw_intent": extras.get("plan", ""),
+            "narrative": extras.get("narrative", ""),
+            "memories": extras.get("memories", ""),
+            "mood_text": mood_text,
+            "satiety_text": satiety_text,
+            "vitality_text": vitality_text,
+            "traits": traits,
+        }
+
+        # 添加 extras 中的额外字段
+        for k, v in extras.items():
+            if k not in result:
+                result[k] = v
+
+        return result
+
+    def extract_location(self, entity_id: str, graph) -> str:
+        """返回实体所在的区域名称。"""
+        ent = graph.get_entity(entity_id) if graph else None
+        if not ent:
+            return "?"
+        return _get_zone_name(ent, graph)
+
+    def resolve_entity_id(self, name: str, type_hint: str = "") -> str:
+        """将名称解析为实体 ID。"""
+        from ...services.graph_adapter import _make_eid
+        if not type_hint:
+            # 尝试从已注册前缀提取
+            clean = _strip_known_prefix(name)
+            if clean != name:
+                return name
+            return name
+        return _make_eid(type_hint, name)
+
+    def format_attribute(self, key: str, value: Any) -> str:
+        """格式化属性为可读文本。"""
+        if value is None:
+            return "未知"
+        _LABELS = {
+            "mood": ("很低落", "有点低落", "一般", "不错"),
+            "satiety": ("很饿", "有点饿", "还行", "吃饱了"),
+            "vitality": ("很疲惫", "有些累", "还行", "精力充沛"),
+        }
+        labels = _LABELS.get(key, ("低", "中", "高"))
+        if value < 30:
+            return labels[0]
+        if value < 50:
+            return labels[1]
+        if value < 70:
+            return labels[2]
+        return labels[3]
+
+    def normalize_name(self, raw: str) -> str:
+        """规范化实体名称（去前缀、去花括号）。"""
+        clean = raw.strip("{}")
+        return _strip_known_prefix(clean)
+
+    def extract_op_references(self, op: dict) -> list[str]:
+        """从操作中提取所有引用的实体名称。"""
+        refs = []
+        for k in ("src", "tgt", "target"):
+            v = op.get(k, "")
+            if v and v not in refs:
+                refs.append(v)
+        for d in ("consumes", "produces"):
+            if d in op and isinstance(op[d], dict):
+                for k in op[d]:
+                    if k not in refs:
+                        refs.append(k)
+        return refs
+
+    def get_entity_tags(self, eid: str, graph) -> list[str]:
+        """返回实体标签列表（供 LLM 标注）。"""
+        tags = []
+        ent = graph.get_entity(eid) if graph else None
+        if ent:
+            if ent.conserved or (eid.startswith("item_") if eid else False):
+                tags.append("conserved")
+            if ent.is_leaf:
+                tags.append("terminal")
+        return tags
+
+    def get_names_by_classification(self, classification: str, graph) -> set[str]:
+        """按分类名返回实体名称集合。"""
+        result = set()
+        for ent in graph.all_entities():
+            nc = self.classify_node(ent.entity_id, graph)
+            if classification == "region" and nc.is_location:
+                result.add(ent.name)
+            elif classification == "thing" and nc.is_consumable:
+                result.add(ent.name)
+            elif classification == "actor" and nc.is_actor:
+                result.add(ent.name)
+        return result
+
+    def merge_results(self, component_results: list) -> dict:
+        """归并多个分量结果为单个上下文。"""
+        merged = {
+            "attr_ops": [],
+            "recent_info_map": {},
+            "stories": [],
+            "exec_results": [],
+        }
+        for comp in component_results:
+            merged["attr_ops"].extend(getattr(comp, "attr_ops", []) or [])
+            merged["recent_info_map"].update(getattr(comp, "recent_info", {}) or {})
+            merged["stories"].extend(getattr(comp, "stories", []) or [])
+            merged["exec_results"].extend(getattr(comp, "exec_results", []) or [])
+        return merged
+
     # ── 原 NPC 专属属性 ──
 
     @property

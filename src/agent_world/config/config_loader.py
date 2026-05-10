@@ -148,6 +148,20 @@ def has_recent_info(type_id: int) -> bool:
     return bool(switches.get("has_recent_info", False))
 
 
+def is_bfs_starter(type_id: int) -> bool:
+    """此类型的节点是否作为 BFS 分量搜索的起始点？"""
+    _load()
+    switches = _TYPE_DEFS.get(type_id, {}).get("switches", {})
+    return bool(switches.get("bfs_starter", False))
+
+
+def is_component_anchor(type_id: int) -> bool:
+    """此类型的节点是否作为分量锚点（同类型阻断锚点）？"""
+    _load()
+    switches = _TYPE_DEFS.get(type_id, {}).get("switches", {})
+    return bool(switches.get("component_anchor", False))
+
+
 def get_all_prefixes() -> list[str]:
     """获取所有已注册的实体 ID 前缀，按长度降序（长前缀优先匹配）"""
     _load()
@@ -272,7 +286,7 @@ def is_verification_check_enabled(check_name: str) -> bool:
 # ─── Zone 对象构建 ───
 
 def build_zone_models() -> list[dict]:
-    """构建可直接传给 init_entity_manager 的 zone 字典列表（兼容旧格式）"""
+    """构建 zone 字典列表（按 config/node_config.json 中的 zones）"""
     _load()
     return [
         {"id": z["id"], "zone_type": z.get("zone_type", z["id"])}

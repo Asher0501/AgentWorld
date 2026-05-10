@@ -109,7 +109,9 @@
       "switches": {
         "terminal": false,
         "same_type_block": false,
-        "has_recent_info": true
+        "has_recent_info": true,
+        "bfs_starter": true,
+        "component_anchor": false
       },
       "prompt": {
         "category": "角色",
@@ -142,7 +144,9 @@
       "switches": {
         "terminal": false,
         "same_type_block": true,
-        "has_recent_info": true
+        "has_recent_info": true,
+        "bfs_starter": false,
+        "component_anchor": true
       },
       "prompt": {
         "category": "场所",
@@ -167,7 +171,9 @@
       "switches": {
         "terminal": true,
         "same_type_block": false,
-        "has_recent_info": true
+        "has_recent_info": true,
+        "bfs_starter": false,
+        "component_anchor": false
       },
       "prompt": {
         "category": "物品",
@@ -187,7 +193,9 @@
       "switches": {
         "terminal": true,
         "same_type_block": false,
-        "has_recent_info": false
+        "has_recent_info": false,
+        "bfs_starter": false,
+        "component_anchor": false
       },
       "prompt": {
         "category": "物件",

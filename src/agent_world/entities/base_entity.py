@@ -20,6 +20,8 @@ from agent_world.config.config_loader import (
     prefix_to_type_id as _prefix_to_tid,
     is_terminal,
     is_same_type_blocked as _same_type_blocked,
+    is_bfs_starter as _is_bfs_starter,
+    is_component_anchor as _is_component_anchor,
     get_type_def as _get_type_def,
 )
 
@@ -75,6 +77,16 @@ class Entity:
     def no_same_type(self) -> bool:
         """同类型阻断标志：BFS 不跨同类型节点。由 node_ontology 配置决定。"""
         return _same_type_blocked(self.type_id)
+
+    @property
+    def is_starter(self) -> bool:
+        """BFS 起始点标志：此类型节点用于分量搜索起点。"""
+        return _is_bfs_starter(self.type_id)
+
+    @property
+    def is_component_anchor(self) -> bool:
+        """分量锚点标志：此类型节点作为分量锚点（同类型阻断锚点）。"""
+        return _is_component_anchor(self.type_id)
 
     def connect_to(self, entity_id: str):
         """添加有向连接"""

@@ -13,7 +13,6 @@ import uuid
 from typing import Any
 
 from ..entities.base_entity import Entity
-from ..config.config_loader import has_role
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +149,7 @@ def build_world_graph(npcs: list, objects: list, zones: list,
             if ent:
                 entities[ent.entity_id] = ent
 
-    # 3. 创建对象（如果有 WorldObjectManager）
+    # 3. 创建对象
     if mgr:
         for obj in mgr.all():
             oid = f"obj_{obj.id[:8]}" if hasattr(obj, 'id') else obj.entity_id

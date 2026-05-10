@@ -983,13 +983,13 @@ class GraphEngine:
         """
         from collections import deque
 
-        # 收集所有 NPC
-        npc_eids = set()
+        # 收集所有 BFS 起点节点
+        starter_eids = set()
         for eid, ent in self._entities.items():
-            if has_role(ent.type_id, "actor"):
-                npc_eids.add(eid)
+            if ent.is_starter:
+                starter_eids.add(eid)
 
-        all_npcs = set(npc_eids)
+        all_npcs = set(starter_eids)
         components: list[TopoComponent] = []
 
         while all_npcs:
@@ -1023,14 +1023,14 @@ class GraphEngine:
                         continue
                     queue.append(conn_eid)
 
-            # 从 visited 中提取 NPC
-            comp_npcs = {e for e in comp_eids if e in npc_eids}
+            # 从 visited 中提取起点节点
+            comp_npcs = {e for e in comp_eids if e in starter_eids}
 
-            # 找 zone
+            # 找分量锚点
             zone_eid = None
             for eid in comp_eids:
                 ent = self._entities.get(eid)
-                if ent and has_role(ent.type_id, "region"):
+                if ent and ent.is_component_anchor:
                     zone_eid = eid
                     break
 

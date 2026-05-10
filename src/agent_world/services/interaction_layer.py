@@ -24,7 +24,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..config.config_loader import has_role
+
 from .prompt_assembler import assemble
 
 logger = logging.getLogger("interaction_layer")
@@ -274,7 +274,7 @@ class InteractionLayer:
                 if not ent:
                     continue
 
-                if has_role(ent.type_id, "actor"):
+                if ent.is_starter:
                     npc_name = eid_to_name.get(eid, ent.name)
                     component_npc_names.add(npc_name)
 

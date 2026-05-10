@@ -78,6 +78,14 @@ class SlotDef:
 
 
 @dataclass
+class RetryPolicy:
+    """阶段重试策略。"""
+    max_attempts: int = 1           # 最多尝试次数（含首次）
+    adaptive: bool = False           # 超时是否自动降 max_tokens
+    degrade_on_fail: bool = True     # 失败后是否跳过卡死的操作
+
+
+@dataclass
 class PipelineStage:
     """一个管线阶段的自声明。
     
@@ -89,6 +97,19 @@ class PipelineStage:
     output_type: StageOutputType = StageOutputType.GRAPH_OPS
     prompt_template: str = ""       # LLM 阶段对应 get_prompt_template(name)
     parser: Callable = lambda r, g: []  # (raw_text, graph) → 按 output_type 返回
+
+    # 新增：adapter 提供执行逻辑
+    execute: Callable = lambda ctx, comp, graph, resolver, **kw: None
+    validate: Callable | None = None    # (result, comp) → list[Failure]
+    retry_policy: RetryPolicy = field(default_factory=RetryPolicy)
+
+
+@dataclass
+class StageResult:
+    """阶段执行结果的通用容器。管线不读 data 内部。"""
+    key: str
+    data: Any = None
+    raw_llm: str = ""
 
 
 @dataclass
@@ -153,6 +174,7 @@ class DomainAdapter(ABC):
         """
         域定义自己的 LLM 管线阶段。
         管线引擎按此列表顺序执行。
+        stage.execute / validate / retry_policy 由域填充。
         """
         ...
 
@@ -176,6 +198,72 @@ class DomainAdapter(ABC):
     @abstractmethod
     def get_validators(self) -> list[GraphValidator]:
         """返回域的所有校验器。管线引擎按需调用。"""
+        ...
+
+    # ═══════════════════════════════════════════════
+    # 新增抽象方法（域净化重构 v2）
+    # ═══════════════════════════════════════════════
+
+    @abstractmethod
+    def build_entity_context(self, entity_id: str, graph, **extras) -> dict:
+        """
+        为实体构建执行上下文（opaque dict）。
+        管线只读 _ 前缀的隐式契约 key，不读域私有 key。
+        
+        隐式契约（必须包含）:
+          _entity_name, _entity_id, _location, _location_changed,
+          _edge_type, _interacted_entities
+        """
+        ...
+
+    @abstractmethod
+    def extract_location(self, entity_id: str, graph) -> str:
+        """返回实体的位置名称。域定义如何找位置。"""
+        ...
+
+    @abstractmethod
+    def resolve_entity_id(self, name: str, type_hint: str = "") -> str:
+        """将名称解析为实体 ID。域定义前缀/哈希规则。"""
+        ...
+
+    @abstractmethod
+    def format_attribute(self, key: str, value: Any) -> str:
+        """格式化单个属性为可读文本。域定义数值→文本映射。"""
+        ...
+
+    @abstractmethod
+    def parse_llm_output(self, stage_key: str, raw: str,
+                          label_map: dict | None,
+                          graph) -> Any:
+        """解析 LLM 原始输出为阶段对应类型。"""
+        ...
+
+    @abstractmethod
+    def normalize_name(self, raw: str) -> str:
+        """规范化实体名称（去前缀、去花括号等）。"""
+        ...
+
+    @abstractmethod
+    def extract_op_references(self, op: dict) -> list[str]:
+        """从操作中提取所有引用的实体名称（用于校验白名单检查）。"""
+        ...
+
+    @abstractmethod
+    def get_entity_tags(self, eid: str, graph) -> list[str]:
+        """返回实体标签列表（如 conserved / terminal），用于 LLM 标注。"""
+        ...
+
+    @abstractmethod
+    def get_names_by_classification(self, classification: str, graph) -> set[str]:
+        """
+        按分类名返回实体名称集合。
+        classification 值由域定义：NPC 域有 "region"/"thing"/"actor"。
+        """
+        ...
+
+    @abstractmethod
+    def merge_results(self, component_results: list) -> dict:
+        """归并多个分量结果为单个上下文。"""
         ...
 
     # ═══════════════════════════════════════════════
