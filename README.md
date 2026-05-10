@@ -7,140 +7,228 @@
   <br/>
   <img src="agentworld_pipeline_concrete.svg" alt="AgentWorld — Concrete Pipeline Example (tick_001)" width="100%">
   <br/>
-  <em><b>Graph is not a feature. Graph is the system.</b></em>
+  <em><b>Graph is not a feature. Graph is the system. / 图拓扑不是组件，是整个系统的骨架。</b></em>
   <br/>
-  <em><b>图拓扑不是组件，是整个系统的骨架。</b></em>
-  <br/>
-  <small>✨ <b>域无关架构（domain-agnostic）</b> · 拓扑-内容解耦 · 分量前置并行管线 · 统一 `nodes` 表 · 度守恒校验 · DI 注入域适配器 · per-type max_nodes ✨</small>
+  <small>✨ <b>Domain-Agnostic · 域无关</b> — one engine kernel, any world · 同一内核，任意世界 ✨</small>
 </p>
 
 ---
 
-> **AgentWorld: A Domain-Agnostic, Graph-First, LLM-Driven Multi-Agent Simulation Engine**
->
-> **EN**: The graph is the first principle — entities are nodes, relationships are edges, and LLMs reason over the topology to produce emergent behavior. **Domain-agnostic architecture** is the key innovation: the engine kernel operates on abstract, content-free node IDs through a `DomainAdapter` interface. All semantic knowledge lives in `domain.json` and `node_config.json`, accessed exclusively via the adapter. Engine code never reads domain field names directly — it passes opaque dicts between stages. This means swapping the adapter + config files transforms the same engine kernel into a village simulator, a protein interaction network, a fantasy economy, or an IoT sensor grid — **with zero code changes**. The pipeline performs **component split first**, then runs 5 adapter-defined stages per component in parallel via `asyncio.gather`. All entity data persists in a **unified `nodes` table** — no legacy tables remain.
->
-> **CN**: 图拓扑是第一性原理——实体是节点，关系是边，LLM 在拓扑之上推理产生涌现行为。**域无关架构**是核心创新：通过 `DomainAdapter` 接口，引擎内核操作抽象的、无内容的节点 ID，所有语义知识通过适配器访问 `domain.json` + `node_config.json`。引擎代码永不直接读取域名段——阶段间传递不透明字典。换适配器 + 配置文件，同一引擎内核可变成村庄模拟器、蛋白质网络、幻想经济或 IoT 传感器网格——**无需改代码**。管线**分量前置**：先做拓扑连通分量分割，再逐分量并行执行 5 个适配器声明的阶段。所有实体数据统一存储在 **`nodes` 表**中。
->
-> 💡 **核心创新点**：域无关架构（domain purification）——管线编排器不包含任何域逻辑，全部委托给 `DomainAdapter` 接口。
+**AgentWorld** is a graph-first, LLM-driven multi-agent simulation engine. It uses a weighted multi-digraph as its single source of truth, then runs a parallel pipeline of LLM calls — planning → narrative → topology change → attribute projection — to produce emergent agent behavior.
+
+**AgentWorld** 是一个图优先、LLM 驱动的多智能体仿真引擎。它使用加权有向多重图作为唯一真相源，通过并行管线执行 LLM 调用——规划→叙事→拓扑变更→属性投影——产生涌现式智能体行为。
+
+The engine kernel is **domain-agnostic**: swap the config files + adapter, and the same code runs a Witcher village, a protein interaction network, a fantasy economy, or an IoT sensor grid — **zero code changes**.
+
+引擎内核是**域无关**的：换一套配置文件 + 适配器，同一份代码就能跑猎魔人村庄、蛋白质交互网络、幻想经济或物联网传感器网格——**无需改代码**。
 
 ---
 
 ## Table of Contents · 目录
 
-1. [Configuration Layer · 配置层](#1-configuration-layer--配置层)
-2. [Persistence Layer · 持久层](#2-persistence-layer--持久层)
-3. [Graph Engine · 图引擎](#3-graph-engine--图引擎)
-4. [Component-First Pipeline · 分量前置管线](#4-component-first-pipeline--分量前置管线)
-5. [Verification & Feedback · 校验与反馈](#5-verification--feedback--校验与反馈)
-6. [Domain Purification · 域净化](#6-domain-purification--域净化)
-7. [Cross-Domain Portability · 跨域可移植性](#7-cross-domain-portability--跨域可移植性)
-8. [Design Principles · 设计原则](#8-design-principles--设计原则)
-9. [Project Structure · 项目结构](#9-project-structure--项目结构)
+1. [Why AgentWorld · 为什么](#1-why-agentworld--为什么)
+2. [Architecture Overview · 架构总览](#2-architecture-overview--架构总览)
+3. [Configuration Layer · 配置层](#3-configuration-layer--配置层)
+4. [Persistence Layer · 持久层](#4-persistence-layer--持久层)
+5. [Graph Engine · 图引擎](#5-graph-engine--图引擎)
+6. [Pipeline · 管线](#6-pipeline--管线)
+7. [Verification & Feedback · 校验与反馈](#7-verification--feedback--校验与反馈)
+8. [Domain Purification · 域净化](#8-domain-purification--域净化)
+9. [Cross-Domain Portability · 跨域可移植性](#9-cross-domain-portability--跨域可移植性)
 10. [Quick Start · 快速开始](#10-quick-start--快速开始)
+11. [Project Structure · 项目结构](#11-project-structure--项目结构)
 
 ---
 
-## 1. Configuration Layer · 配置层
+## 1. Why AgentWorld · 为什么
 
-**Two JSON files define every aspect of a world.** The engine reads these at startup to seed the database and build the runtime graph.
+### 1.1 The Problem · 问题
 
-### 1.1 `node_config.json` — Node Ontology & Entity Definitions
+Building a multi-agent simulation traditionally means hardcoding domain logic into every layer: the engine knows about "NPCs", "zones", "inventory", "mood". To simulate a different world — say, protein interactions instead of fantasy characters — you must rewrite the engine.
 
-Defines node **types**, their **taxonomy** (prefix, max_nodes, terminal flags), and all **entity instances** (NPCs, zones, items, objects).
+传统的多智能体仿真中，域逻辑嵌入到每一层：引擎知道 "NPC"、"区域"、"背包"、"心情"。要模拟不同的世界——比如换成蛋白质交互网络——就得重写引擎。
+
+### 1.2 The Solution · 方案
+
+**Decouple the engine kernel from domain knowledge.** Three design choices make this possible:
+
+**将引擎内核与域知识解耦。** 三个设计选择使之成为可能：
+
+1. **Graph as single source of truth** — Every entity is a node, every relationship is an edge. Adjacency queries are O(1), inventory is inherently consistent. No relational JOINs or cached state.
+
+   **图拓扑为唯一真相源**——每个实体是一个节点，每个关系是一条边。邻接查询 O(1)，背包天然一致，无需关系型 JOIN 或缓存状态。
+
+2. **Component-first pipeline** — BFS from agents → connected subgraphs. Each component runs its own LLM pipeline in parallel via `asyncio.gather`. No wasted prompt space on disconnected entities.
+
+   **分量前置管线**——从智能体出发 BFS → 连通分量。每个分量独立并行执行 LLM 管线，不放无关实体进 prompt 浪费 token。
+
+3. **Domain purification** — A `DomainAdapter` interface absorbs all domain-specific logic. The pipeline orchestrator never reads entity types, attribute names, or zone definitions. It only passes opaque dicts between stages.
+
+   **域净化**——`DomainAdapter` 接口吸收所有域特定逻辑。管线编排器从不读实体类型、属性名或区域定义，只在阶段间传递不透明字典。
+
+### 1.3 Key Concepts · 核心概念
+
+| Concept · 概念 | Meaning · 含义 |
+|:---------------|:---------------|
+| **Entity · 实体** | A node in the graph (NPC, zone, item, object). Each has a `type_id`, attributes, and edges. |
+| **Component · 分量** | A connected subgraph found by BFS from agent nodes. Each tick's pipeline runs per component. |
+| **Stage · 阶段** | A single LLM call within the component pipeline (Plan → Narrative → Topo Delta → Content Update). Adapter-defined. |
+| **Hook · 钩子** | A fixed point in the pipeline where side-effects or retry logic fires. 6 hooks defined (A–F). |
+| **Opaque Context · 不透明上下文** | A dict with `_`-prefixed keys produced by the adapter. Pipeline passes it through without reading. |
+| **Topology Label · 拓扑标签** | Config-driven flags (`is_starter`, `is_component_anchor`, `is_leaf`) that replace `has_role()` type checks. |
+| **Conservation · 守恒** | Items marked `is_conserved: true` must follow Σ=0 for internal flows. Like thermodynamics. |
+
+---
+
+## 2. Architecture Overview · 架构总览
+
+AgentWorld has three layers: **config** (domain-specific) → **engine kernel** (domain-agnostic) → **persistence** (unified).
+
+AgentWorld 分为三层：**配置层**（域特定）→ **引擎内核**（域无关）→ **持久层**（统一）。
+
+<p align="center">
+  <img src="agentworld_config_db.svg" alt="Config → DB → Engine" width="100%">
+</p>
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    Domain-Specific · 域特定                    │
+│  config/node_config.json   config/domain.json                │
+│  domain/npc_world/adapter.py   (DomainAdapter subclass)      │
+└────────────────────────────────┬─────────────────────────────┘
+                                 │ Load & seed via DomainAdapter
+                                 ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    Engine Kernel · 引擎内核                    │
+│                                                              │
+│  Graph Engine — weighted multi-digraph, BFS component split  │
+│                                                              │
+│  Pipeline — component-first, adapter-driven 5-stage loop     │
+│  │  Plan (LLM #1) → Exec Results (code) → Narrative (LLM #3)│
+│  │  → Topo Delta (LLM #4a + verification retry) →           │
+│  │    Content Update (LLM #5 + verification retry)           │
+│                                                              │
+│  Verification — 6-check registry, config-masked per domain   │
+│  Conservation — Σ=0 validator for conserved items            │
+└────────────────────────────────┬─────────────────────────────┘
+                                 │ sync_graph_to_nodes() after each tick
+                                 ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    Persistence · 持久层                        │
+│  SQLite — unified nodes table                                │
+│  NodeDB — generic CRUD, no type-specific getters             │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**The pipeline is adapter-driven:** the orchestrator calls `adapter.get_pipeline_stages()`, then dispatches each stage to a handler by key. Adapter declares what stages exist, their order, and how to parse output. The engine has zero hardcoded stage logic.
+
+**管线由适配器驱动：** 编排器调用 `adapter.get_pipeline_stages()`，然后按 key 分派到对应处理器。适配器声明有哪些阶段、顺序和输出解析方式。引擎内核没有硬编码的阶段逻辑。
+
+**The only domain-aware line in the entire codebase:**
+
+**整个代码库中唯一的域感知行：**
+
+```python
+# run_1tick.py
+adapter = NPCWorldAdapter()     # ← swap here for a different world
+engine = GraphNPCEngine(adapter=adapter)
+orch = PipelineOrchestrator(adapter, engine._resolver, engine.graph_engine)
+```
+
+---
+
+## 3. Configuration Layer · 配置层
+
+Two JSON files define every aspect of a world. The engine reads these at startup to seed the database and build the runtime graph.
+
+两个 JSON 文件定义了一个世界的全部。引擎启动时读取它们来填充数据库和构建运行时图。
+
+### 3.1 `node_config.json` — Node Ontology · 节点本体
+
+Defines node **types** (taxonomy, prefix, max_nodes, terminal flags) and all **entity instances** (NPCs, zones, items, objects).
+
+定义节点**类型**（分类、前缀、上限、终端标记）和所有**实体实例**（NPC、区域、物品、物件）。
 
 ```
 node_config.json
-├── node_types[]          # Type taxonomy (4 types: npc, zone, item, object)
-│   ├── id / prefix       # "npc" → "npc_" prefix
-│   ├── max_nodes         # Per-type capacity limit
-│   ├── roles[]           # "actor", "region", "container", "fixture"
-│   ├── switches{}        # terminal, same_type_block, has_recent_info
-│   └── prompt{}          # order, fields[], category (for LLM prompt sorting)
+├── node_types[]           # 4 types: npc, zone, item, object
+│   ├── id / prefix        # "npc" → "npc_" prefix
+│   ├── max_nodes          # Per-type capacity limit
+│   ├── roles[]            # "actor", "region", "container", "fixture"
+│   ├── switches{}         # terminal, same_type_block, has_recent_info
+│   └── prompt{}           # LLM prompt sorting hints
 ├── entities{}
-│   ├── zones[]           # 7 predefined zones (白果园, 诺维格瑞, ...)
-│   │   ├── id, name, capacity, description
-│   │   └── connects_to[]  # Zone→zone connectivity graph
-│   ├── items[]           # 11 items (金币, 草药, 武器, ...)
-│   │   ├── id, name, type, description
-│   │   └── connected_nodes[]  # Initial entity relationships
-│   ├── npcs[]            # 13 NPCs with full stats
-│   │   ├── name, role, zone (initial position)
-│   │   ├── vitality, satiety, mood
-│   │   ├── inventory{}, physical{}, persona{}
-│   │   └── primary_goal
-│   └── objects[]         # Fixtures/furniture
-├── world{}               # default_time, zone_connections topology
-├── verification{}        # Check registry + mask (6 checks)
-└── label_mappings{}      # Entity name → topology letter (A–Z)
+│   ├── zones[]            # 7 predefined zones
+│   ├── items[]            # 11 items
+│   ├── npcs[]             # 13 NPCs with full stats
+│   └── objects[]          # Fixtures/furniture
+├── world{}                # default_time, zone_connections
+├── verification{}         # 6-check registry + mask
+└── label_mappings{}       # Entity name → topology letter (A–Z)
 ```
 
-### 1.2 `domain.json` — Semantic Layer (Prompt Slots & Rules)
+### 3.2 `domain.json` — Semantic Layer · 语义层
 
-Contains every piece of **natural language** and **behavioral rule** that makes the world feel real. Engine never reads this directly — it's injected into LLM prompts through the `DomainAdapter`.
+Contains every piece of **natural language** and **behavioral rule** that makes the world feel real. Engine never reads this directly — it's injected through the `DomainAdapter`.
+
+包含**所有自然语言和行为规则**，让世界栩栩如生。引擎从不直接读取——通过 `DomainAdapter` 注入。
 
 ```
 domain.json
-├── adapter.system_role{}    # System prompts for each LLM stage
-│   ├── llm2, llm3, llm4a, llm5
-├── adapter.output_format{}  # JSON schemas for structured outputs
-│   ├── llm4a: thinking + operations JSON
-│   ├── llm5: attr_ops + recent_info JSON
-├── adapter.*                # All prompt slot templates
+├── adapter.system_role{}    # System prompts per LLM stage
+├── adapter.output_format{}  # JSON schemas for structured output
+├── adapter.*                # Prompt slot templates
 │   ├── survival_needs       # "⚠️ vitality < 30: extreme fatigue"
 │   ├── entity_identity      # "## NPC: {name} ({role})"
-│   ├── inventory            # "### 当前持有\n{items}"
-│   └── decision_guidance    # Natural language behavior guides
-├── zones[]                  # Domain-specific zone metadata
-├── recipes[]                # 6 recipes (研磨魔药, 冶炼矿石, ...)
-└── verification{}           # Masks per layer (translation, prewrite, topology, projection)
+│   ├── inventory            # "### Current items\n{items}"
+│   └── decision_guidance    # Behavioral rules in NL
+├── zones[]                  # Zone metadata
+├── recipes[]                # Transform recipes
+└── verification{}           # Masks per layer
 ```
 
-> 💡 **Key insight**: Replacing these two `.json` files = creating a new world. The engine kernel never changes.
+> 💡 Replacing these two `.json` files + writing a `DomainAdapter` subclass = a new world. The engine kernel never changes.
+>
+> 💡 换这两个 `.json` 文件 + 写一个 `DomainAdapter` 子类 = 新世界。引擎内核不改。
 
-### 1.3 Config → DB Pipeline
-
-> **Figure: How configuration files feed into the database and engine at runtime.**
-> Config is read **once** (first run or DB empty) → seed to `nodes` table. All subsequent runs load from DB, never re-read config.
-
-<p align="center">
-  <img src="agentworld_config_db.svg" alt="Config → DB → Engine Pipeline" width="100%">
-</p>
-
-**The seed flow (executed by `NodeDB._seed_from_config()`):**
+### 3.3 Seed Flow · 种子数据流
 
 | Source | Target (nodes table) | Rows |
 |--------|---------------------|:----:|
-| `create_diverse_npcs()` (from config entity defs) | `type="npc"` rows | 13 |
-| `get_zones()` + `build_zone_model_full()` | `type="zone"` rows | 7 |
-| `get_items()` | `type="item"` rows | 11 |
-| `_get_config_recipes()` (from domain.json) | `type="recipe"` rows | 6 |
-| hardcoded system node | `type="system"` (world_time) | 1 |
-| `objects` (from config entity defs) | `type="object"` rows | 1 |
-| **Total seeded** | | **38** |
+| NPC entity definitions | `type="npc"` | 13 |
+| Zone definitions | `type="zone"` | 7 |
+| Item definitions | `type="item"` | 11 |
+| Recipes (from domain.json) | `type="recipe"` | 6 |
+| System node (world_time) | `type="system"` | 1 |
+| Object definitions | `type="object"` | 1 |
+| **Total** | | **38** |
 
 ---
 
-## 2. Persistence Layer · 持久层
+## 4. Persistence Layer · 持久层
 
-### 2.1 Unified `nodes` Table (Phase 2)
+### 4.1 Unified `nodes` Table · 统一节点表
 
 **All entities live in a single table.** No separate `world`, `npcs`, or `world_objects` tables remain.
+
+**所有实体在同一张表中。** 没有独立的 `world`、`npcs` 或 `world_objects` 表。
 
 ```sql
 CREATE TABLE nodes (
     id TEXT PRIMARY KEY,        -- "npc_杰洛特" / "zone_白果园" / "item_金币"
-    type TEXT NOT NULL,           -- "npc" / "zone" / "item" / "recipe" / "object"
-    name TEXT NOT NULL,           -- "杰洛特" / "白果园"
-    data TEXT NOT NULL,           -- JSON: all attributes, inventory, relationships
-    created_at TEXT NOT NULL,     -- ISO 8601
-    updated_at TEXT NOT NULL      -- ISO 8601
+    type TEXT NOT NULL,         -- "npc" / "zone" / "item" / "recipe" / "object"
+    name TEXT NOT NULL,         -- "杰洛特" / "白果园"
+    data TEXT NOT NULL,         -- JSON: attributes, inventory, relationships
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 ```
 
-### 2.2 NodeDB — Generic CRUD
+### 4.2 NodeDB — Generic CRUD
 
 `NodeDB` in `db/db.py` is the **sole persistence interface**. Zero type-specific getters — all accesses go through `get_nodes(type_filter=...)`.
+
+`NodeDB`（位于 `db/db.py`）是**唯一的持久化接口**。没有类型特定的 getter——所有访问通过 `get_nodes(type_filter=...)`。
 
 | Method | Purpose |
 |--------|---------|
@@ -150,209 +238,155 @@ CREATE TABLE nodes (
 | `upsert_node(id, type, name, data)` | Create or replace |
 | `upsert_many(nodes)` | Batch upsert |
 | `delete_node(id)` | Remove |
-| `get/save_world_time()` | System node: world clock |
+| `get/save_world_time()` | World clock (system node) |
 | `count(type_filter)` | Stats |
 
-### 2.3 Node ↔ Model Converters
+### 4.3 Conversion Layer · 转换层
 
-Conversion logic lives in `db/converters.py` — keeps `NodeDB` generic:
+`db/converters.py` keeps `NodeDB` generic:
 
-- `node_to_npc(node_dict)` → `NPC` model object
-- `npc_to_node_dict(npc)` → `dict` for `nodes.data`
+- `node_to_npc(node_dict)` → `NPC` model (for ad-hoc queries)
+- `npc_to_node_dict(npc)` → `dict` (for `nodes.data`)
 
-### 2.4 Persistence Lifecycle
+### 4.4 Lifecycle · 生命周期
 
 ```
 Startup:   load_or_seed()  ──→  GraphEngine (runtime)
-            (DB → entities)
-
-Each tick: GraphEngine (modified)  ──→  sync_graph_to_nodes()  ──→  DB
-                                      (entity_to_node_dict per entity)
-
-On create: LLM#4a creates new zone/entity  ──→  _on_graph_entity_created()  ──→  upsert to DB
+Each tick: GraphEngine → sync_graph_to_nodes()  ──→  DB
+On create: LLM #4a → _on_graph_entity_created()  ──→  upsert to DB
 ```
 
 ---
 
-## 3. Graph Engine · 图引擎
+## 5. Graph Engine · 图引擎
 
-> **EN**: The core data structure — a weighted multi-digraph. Every entity is a node, every relationship is an edge with a quantity.
->
-> **CN**: 核心数据结构——加权有向多重图。每个实体是一个节点，每个关系是一条带数量的边。
+The core data structure — a **weighted multi-digraph**. Every entity is a node, every relationship is an edge with a quantity.
 
-### 3.1 Data Model
+核心数据结构——**加权有向多重图**。每个实体是一个节点，每个关系是一条带数量的边。
+
+### 5.1 Data Model · 数据模型
 
 ```mermaid
 flowchart LR
-    subgraph NPC["NPC Node (npc_杰洛特)"]
-        direction TB
-        A_ATTR["attributes:<br/>vitality: 77<br/>satiety: 43<br/>mood: 54"]
-        A_EDGES["edges:<br/>→ zone_白果园 (qty: 1)<br/>→ item_金币 (qty: 8)<br/>→ item_草药 (qty: 6)<br/>→ npc_丹德里恩 (no qty)"]
+    subgraph NPC["npc_杰洛特"]
+        A_ATTR["vitality: 77<br/>satiety: 43<br/>mood: 54"]
+        A_EDGES["→ zone_白果园 (qty: 1)<br/>→ item_金币 (qty: 8)<br/>→ item_草药 (qty: 6)<br/>→ npc_丹德里恩 (no qty)"]
     end
-
-    subgraph ZONE["Zone Node (zone_白果园)"]
+    subgraph ZONE["zone_白果园"]
         Z_ATTR["description: 泰莫利亚小村庄<br/>capacity: 20"]
-        Z_EDGES["edges:<br/>→ zone_狐狸与鹅酒馆 (qty: 1)<br/>← npc_杰洛特 (auto)<br/>→ item_草药 (qty: ∞)"]
+        Z_EDGES["→ zone_狐狸与鹅酒馆<br/>← npc_杰洛特<br/>→ item_草药 (qty: ∞)"]
     end
-
-    subgraph ITEM["Item Node (item_金币)"]
+    subgraph ITEM["item_金币"]
         I_ATTR["is_conserved: true"]
-        I_EDGES["edges:<br/>← npc_杰洛特 (qty: 8)<br/>← npc_托蜜拉 (qty: 3)"]
+        I_EDGES["← npc_杰洛特 (qty: 8)<br/>← npc_托蜜拉 (qty: 3)"]
     end
-
-    NPC -->|"npc_zone"| ZONE
-    NPC -->|"npc_item"| ITEM
-    NPC -.->|"npc_npc"| NPC_OTHER["npc_丹德里恩"]
+    NPC -->|npc_zone| ZONE
+    NPC -->|npc_item| ITEM
 ```
 
-### 3.2 Edge Types
+### 5.2 Edge Types · 边类型
 
 | Edge Type | Semantics | qty meaning |
 |-----------|-----------|-------------|
-| `npc_zone` | NPC in a zone | 1 (single zone) |
+| `npc_zone` | NPC is in a zone | 1 (single zone) |
 | `zone_zone` | Zone connectivity | 1 |
 | `npc_item` | NPC holds item | held count |
-| `zone_item` | Zone has item | stock count |
+| `zone_item` | Zone has item in stock | stock count |
 | `npc_npc` | Interaction (tick-level) | interaction strength |
 | `zone_npc` | NPCs in zone (auto-maintained) | 1 |
-| `item_zone` | Item belongs to zone (auto) | stock count |
 | `npc_object` | NPC using object | 1 |
-| `config_zone` | Seed-time zone links | 1 |
 
-### 3.3 Key Operations
+### 5.3 Key Operations · 关键操作
 
-- `supply_view(entity_id)` — recursive inventory aggregation → `{item: total_qty}`
-- `build_components()` — BFS from NPCs → connected subgraphs (for parallel pipeline)
-- `apply_edge_operations(ops)` — commit delta/system_delta/recipe ops atomically
-- `entity_to_node_dict()` → serialize runtime entity state for DB
+| Operation | What it does |
+|-----------|-------------|
+| `supply_view(entity_id)` | Recursive inventory aggregation → `{item: total_qty}` |
+| `build_components()` | BFS from starter entities → connected subgraphs (for parallel pipeline) |
+| `apply_edge_operations(ops)` | Commit delta/system_delta/recipe ops atomically |
+| `entity_to_node_dict()` | Serialize runtime entity for DB sync |
 
 ---
 
-## 4. Component-First Pipeline · 分量前置管线
+## 6. Pipeline · 管线
 
-### 4.1 Architecture Overview
+### 6.1 Why Component-First? · 为什么分量前置？
 
-> **Figure: System architecture showing the domain-agnostic kernel. Component split runs first, then per-component adapter-driven pipeline in parallel.**
+**Before** (deprecated): Global LLM #1 for ALL NPCs → intent parsing → component split → per-component stories. Wasted prompt context on disconnected entities, couldn't parallelize.
+
+**以前**（已弃用）：对所有 NPC 执行全局 LLM #1 → 意图解析 → 分量分割 → 逐分量故事。在无关实体上浪费 prompt 上下文，无法并行。
+
+**After** (current): BFS component split first → each component runs the full 5-stage pipeline independently via `asyncio.gather`.
+
+**现在**（当前）：先 BFS 分量分割 → 每个分量独立通过 `asyncio.gather` 并行执行完整的 5 阶段管线。
+
+### 6.2 Stage Flow · 阶段流程
 
 ```mermaid
 flowchart TB
-    subgraph KERNEL["Domain-Agnostic Engine Kernel · 域无关引擎内核"]
+    SPLIT["Component Split · 分量分割<br/><small>BFS from agents</small>"]
+
+    subgraph COMP["Per-Component Pipeline (asyncio.gather)"]
         direction TB
-
-        DB[("Persistence Layer<br/>SQLite — unified nodes table")]
-
-        GE["Graph Engine<br/><small>pure topology: entities=nodes, relationships=edges<br/>纯拓扑：实体=节点，关系=边</small>"]
-
-        subgraph PIPELINE["Component-First Pipeline · 分量前置管线"]
-            direction TB
-
-            SPLIT["🔀 Component Split<br/>分量分割<br/><small>BFS from NPCs → connected subgraphs</small>"]
-
-            subgraph COMP["Per-Component Pipeline × N (asyncio.gather)<br/>逐分量并行 (adapter-driven stages)"]
-                direction TB
-                L1["Adapter Stage: Plan LLM #1<br/>规划"]
-                IE["Exec Results<br/>执行结果<br/><small>inline, no LLM</small>"]
-                L3["Adapter Stage: Narrative LLM #3<br/>叙事"]
-                L4a["Adapter Stage: Topo Delta LLM #4a<br/>拓扑增量<br/><small>+ retry path</small>"]
-                CV["Conservation Validator<br/>度守恒校验<br/><small>capacity, entity existence</small>"]
-                L5["Adapter Stage: Content Update LLM #5<br/>属性投影"]
-                RET{{"Retry<br/>(component only)"}}
-                L1 --> IE --> L3 --> L4a --> CV --> L5
-                L5 -->|Fail| RET -.-> L4a
-            end
-
-            MERGE["Merge Components<br/>分量归并"]
-        end
-
-        SPLIT --> COMP --> MERGE -->|commit + sync| GE
-        DB --- GE
+        L1["Stage: Plan · 规划 LLM #1"]
+        IE["↳ Exec Results (code)<br/>adapter.build_entity_context()"]
+        L3["Stage: Narrative · 叙事 LLM #3"]
+        V4["Verification check · 校验"]
+        L4a["Stage: Topo Delta · 拓扑增量 LLM #4a"]
+        CV["Conservation Validator · 度守恒"]
+        L5["Stage: Content Update · 内容更新 LLM #5"]
+        V5["Verification check · 校验"]
+        RET["↳ Retry (component only) · 重试"]
+        L1 --> IE --> L3 --> V4 --> L4a --> CV --> L5 --> V5
+        V4 -->|❌| RET
+        V5 -->|❌| RET
+        RET -.-> L4a
     end
 
-    subgraph CONFIG["Domain-Specific Configuration · 域特定配置"]
-        DOMAIN["domain.json<br/><small>prompt slots, recipes, output schemas,<br/>verification masks</small>"]
-        NODE["node_config.json<br/><small>node ontology, entity definitions,<br/>label mappings</small>"]
-    end
+    MERGE["Merge · 归并<br/><small>adapter.merge_results()</small>"]
 
-    subgraph ADAPTER["DomainAdapter (DI injected)"]
-        A_METHODS["build_entity_context()<br/>extract_location()<br/>format_attribute()<br/>get_pipeline_stages()<br/>resolve_entity_id()<br/>merge_results()<br/>... (24 abstract methods)"]
-    end
-
-    TL["Translation Layer<br/>翻译层<br/><small>abstract letters → NL<br/>抽象标签 → 自然语言 + verify</small>"]
-
-    CONFIG -.->|"slot injection"| COMP
-    CONFIG -.->|"entity definitions"| GE
-    GE -.->|"topology"| SPLIT
-    ADAPTER -.->|"drives"| KERNEL
-
-    style KERNEL fill:#f8fafc,stroke:#94a3b8,stroke-width:2px
-    style CONFIG fill:#eff6ff,stroke:#3b82f6,stroke-width:2px,stroke-dasharray: 5 5
-    style ADAPTER fill:#fce4ec,stroke:#e91e63,stroke-width:2px
-    style TL fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px
-    style DB fill:#f0fdf4,stroke:#86efac,stroke-width:1px
-    style GE fill:#eef2ff,stroke:#818cf8,stroke-width:2px
-    style PIPELINE fill:#fafafa,stroke:#94a3b8,stroke-width:1px
-    style COMP fill:#fafafa,stroke:#94a3b8,stroke-width:1px,stroke-dasharray: 3 3
-    style DOMAIN fill:#dbeafe,stroke:#60a5fa,stroke-width:1px
-    style NODE fill:#dbeafe,stroke:#60a5fa,stroke-width:1px
-    style SPLIT fill:#6366f1,color:#fff
-    style L1 fill:#8b5cf6,color:#fff
-    style IE fill:#3b82f6,color:#fff
-    style L3 fill:#6366f1,color:#fff
-    style L4a fill:#10b981,color:#fff
-    style CV fill:#f59e0b
-    style L5 fill:#ef4444,color:#fff
-    style RET fill:#ef4444,color:#fff
-    style MERGE fill:#475569,color:#fff
+    SPLIT --> COMP --> MERGE -->|sync_graph_to_nodes| DB["Persistence · 持久化"]
 ```
 
-> 💡 **Pipeline stages are adapter-defined.** The orchestrator iterates `adapter.get_pipeline_stages()`, dispatches each to `_STAGE_HANDLERS` via key match. Adapter declares what stages exist, what order they run, and how to parse their output. Engine code has zero hardcoded stage logic.
+### 6.3 Stage Details · 阶段详情
 
-### 4.2 Why Component-First?
+| Stage | Type | Input → Output | Retry |
+|:------|:-----|:---------------|:------|
+| **Component Split** | Code | GraphEngine topology → N components (BFS) | — |
+| **#1 Plan** | LLM | Entity state + topology → NL plan | — |
+| **↳ Exec Results** | Code | GraphEngine → opaque exec dict per NPC (via `adapter.build_entity_context()`) | — |
+| **#2 Structure** | LLM | Topology → abstract structure description | — |
+| **#3 Narrative** | LLM | Plans + exec_results → story text | — |
+| **#4a Topo Delta** | LLM | Plans + stories + topology → structured delta/system_delta/recipe ops | ✅ feedback retry |
+| **↳ Conservation Validator** | Code | Topo ops → Pass/Fail | Triggers retry |
+| **#5 Content Update** | LLM | Results + stories + topo diff → attr deltas + recent_info | ✅ feedback retry |
+| **↳ Verification** | Code | All outputs → Pass/Fail (6 checks) | Triggers retry |
+| **↳ Merge** | Code | N component results → aggregated operations | — |
 
-**Old flow** (deprecated): Global LLM #1 for ALL NPCs → global intent parsing → component split → per-component stories/updates.
-- Wasted prompt space on NPCs in different zones
-- Large components couldn't be parallelized
+### 6.4 Prompt Assembly · Prompt 组装
 
-**Current flow**: Component split first (BFS on NPC graph) → each component runs full pipeline independently via `asyncio.gather`.
+Each prompt is assembled from ordered **slots**. Each slot has a provider:
 
-### 4.3 Pipeline Stage Details
-
-| Stage | Type | Input | Output | Retry | Note |
-|:------|:-----|:------|:-------|:------|:-----|
-| **↳ Component Split** | Code | GraphEngine | N connected components (BFS) | — | Topology-label-driven |
-| **#1 Plan** | LLM | Entity state + topology | Natural language plan | — | Adapter-driven prompt |
-| **↳ Exec Results** | Code | GraphEngine | Per-NPC opaque exec dict | — | `adapter.build_entity_context()` |
-| **#2 Topo Structure** | LLM | Topology graph | Abstract structure | — | No-op (implicit via adjacency) |
-| **#3 Narrative** | LLM | Plans + exec_results | Story text | — | Adapter-driven prompt |
-| **#4a Topo Delta** | LLM | Plans + stories + topo | `delta`/`system_delta`/`recipe` JSON ops | ✅ feedback retry | Adapter-driven validation |
-| **↳ Conservation Validator** | Code | Topo ops | Pass / Fail | Triggers retry | Σ=0 for conserved items |
-| **#5 Content Update** | LLM | Results + stories + topo_diff | attr deltas + recent_info | ✅ feedback retry | Adapter-driven prompt |
-| **↳ Verification** | Code | All outputs | Pass / Fail | 6-check registry | Masked by config |
-| **↳ Merge** | Code | N component results | Aggregated operations | — | `adapter.merge_results()` |
-
-### 4.4 Slot-Based Prompt Assembly
-
-Each LLM prompt is assembled from ordered slots. Each slot has a provider:
+每个 prompt 由有序的**插槽**组装而成。每个插槽有一个提供者：
 
 ```
 LLM #1 prompt = [
   ("time_info",         "runtime"),     # ← system clock
-  ("survival_needs",    "content"),     # ← domain.json
+  ("survival_needs",    "content"),     # ← domain.json via adapter.render_slot()
   ("entity_identity",   "content"),     # ← domain.json
-  ("label_mapping",     "topology"),    # ← graph engine
+  ("label_mapping",     "topology"),    # ← graph engine (topology labels)
   ("topology_graph",    "topology"),    # ← graph engine (+ Translation Layer)
   ("decision_guidance", "content"),     # ← domain.json
 ]
 ```
 
 **Three providers:**
-- `"content"` — Text from `domain.json` via `DomainAdapter.render_slot()`
-- `"topology"` — Engine-rendered data (labels, edges, constraints), optionally through Translation Layer
-- `"runtime"` — Live data (clock, verification feedback)
+- **`"content"`** — Text from `domain.json` via `DomainAdapter.render_slot()`
+- **`"topology"`** — Engine-rendered data (labels, edges), optionally through Translation Layer
+- **`"runtime"`** — Live data (clock, feedback)
 
-### 4.5 LLM Output Schemas
+### 6.5 LLM Output Schemas · 输出格式
 
-**LLM #4a (Topo Delta)** — structured JSON operations:
+**LLM #4a (Topo Delta):**
 
 ```json
 {
@@ -365,7 +399,7 @@ LLM #1 prompt = [
 }
 ```
 
-**LLM #5 (Attribute Projection)** — attr changes + recent_info:
+**LLM #5 (Content Update):**
 
 ```json
 {
@@ -380,221 +414,193 @@ LLM #1 prompt = [
 }
 ```
 
-### 4.6 Translation Layer
+### 6.6 Translation Layer · 翻译层
 
-The engine uses **abstract letter labels** (A, B, C...) instead of entity names in topology, to prevent LLM entity hallucination. A dedicated Translation Layer converts these to natural language before feeding to LLMs #3 and #4a.
+The engine uses **abstract letter labels** (A, B, C...) instead of entity names in topology prompts, to prevent LLM entity hallucination. A dedicated translation step converts these to natural language before feeding to downstream stages.
+
+引擎在拓扑 prompt 中使用**抽象字母标签**（A, B, C...）替代实体名，防止 LLM 实体幻觉。专门的翻译步骤在喂给下游阶段前将标签转为自然语言。
 
 ```mermaid
 flowchart LR
-    subgraph Raw["🔤 Abstract Topology · 抽象拓扑"]
-        A["{A} → {B} qty: 5<br/>{B} ↔ {C} (no qty)"]
-    end
+    RAW["Abstract: {A} → {B} qty: 5"]
+    TL["🌉 Translation LLM"]
+    TV["✅ Verification<br/><small>entity_existence<br/>quantity_accuracy<br/>entity_coverage</small>"]
+    NL["NL: 杰洛特持有5枚金币"]
+    RET["🔁 Retry with feedback"]
 
-    subgraph TL2["🌉 Translation Layer · 翻译层"]
-        direction TB
-        LLM["🤖 LLM Call<br/><small>Translate abstract → NL</small>"]
-        TV["✅ Translation Verification<br/><small>entity_existence<br/>quantity_accuracy<br/>entity_coverage</small>"]
-        RET["🔁 Retry with Feedback"]
-        LLM --> TV
-        TV -->|"❌"| RET
-        RET --> LLM
-    end
-
-    subgraph NL["📝 Natural Language"]
-        OUT[""杰洛特持有5枚金币<br/>丹德里恩和希里同在""]
-    end
-
-    Raw --> LLM
-    TV -->|"✅"| OUT
-
-    style TL2 fill:#e0f7fa,stroke:#00bcd4,stroke-width:2px
-    style TV fill:#fff9c4
+    RAW --> TL --> TV
+    TV -->|✅| NL
+    TV -->|❌| RET --> TL
 ```
 
 ---
 
-## 5. Verification & Feedback · 校验与反馈
+## 7. Verification & Feedback · 校验与反馈
 
-### 5.1 Two-Layer Verification
+### 7.1 Two-Layer Verification · 两层校验
 
-Two verification hooks are built into the pipeline:
-
-1. **Post-LLM #4a (Topo Delta)**: All 6 checks run against the proposed topology operations — entity existence, capacity, direction pairing, etc.
-2. **Post-LLM #5 (Content Update)**: Attribute projections and recent_info validated against graph state.
+1. **Post-LLM #4a (Topo Delta)**: 6 checks run against proposed topology operations
+2. **Post-LLM #5 (Content Update)**: Attribute projections and recent_info validated
 
 Each check is enabled/disabled by a **mask** in `domain.json` — configurable per domain.
 
-### 5.2 6-Check Registry
+每个校验由 `domain.json` 中的**掩码**控制开启/关闭——可每域配置。
 
-| Index | Check | Stage | Description |
+### 7.2 6-Check Registry · 六项校验
+
+| Index | Check | Layer | Description |
 |:-----:|:------|:------|:------------|
 | 0 | **entity_existence** | Translation + Pre-write | All referenced entities exist in graph |
 | 1 | **quantity_accuracy** | Translation | NL quantities match ground truth |
-| 2 | **capacity_upper_bound** | Pre-write | Negative deltas ≤ current edge quantity |
+| 2 | **capacity_upper_bound** | Pre-write | Negative deltas ≤ current edge qty |
 | 3 | **entity_coverage** | Translation | Every entity appears in NL description |
 | 4 | **direction_pairing** | LLM | Bidirectional flows alternate correctly |
 | 5 | **story_consistency** | LLM | Topo ops align with story narrative |
 
-### 5.3 Adaptive Retry (Hook C)
+### 7.3 Adaptive Retry (Hook C) · 自适应重试
 
-LLM API calls use a 3-tier adaptive timeout strategy:
+A 3-tier degressive strategy for LLM API timeouts:
 
 | Attempt | Timeout | Max Tokens | Temperature |
 |:-------:|:-------:|:----------:|:-----------:|
-| 1st | 180s | 8192 | 1.0 (default) |
+| 1st | 180s | 8192 | 1.0 |
 | 2nd | 120s | 3072 | 0.7 |
 | 3rd | 120s | 2048 | 0.8 |
 
-`reset_client()` is called between retries to clear any connection state. This reduced tick time by up to 42% compared to the original single-timeout strategy.
+`reset_client()` is called between retries. This reduced tick time by up to **42%**.
 
-### 5.3 Conservation Validation (Σ=0)
+### 7.4 Conservation (Σ=0) · 度守恒
 
-Inspired by thermodynamics. **Internal** flows must conserve (Σ=0). **System-boundary** flows (consumption, gathering) may not.
+Inspired by thermodynamics. **Internal** flows must conserve. **System-boundary** flows (consumption, gathering) may not.
+
+灵感来自热力学。**内部**流动必须守恒（Σ=0）。**系统边界**流动（消耗、采集）可以不守恒。
 
 ```
-                    ┌──────────────────────┐
-                    │  Internal (Σ=0)      │
-                    │   Entity A ↔ Entity B│  ← trades conserved
-                    │   Recipe transforms  │  ← balanced (inputs=outputs)
-                    └────────┬─────────────┘
-                             │
-                    System boundary ──────── → Σ ≠ 0
-                             │
-                    ┌────────┴─────────────┐
-                    │  Environment (Σ≠0)   │
-                    │   Consumption · 消耗  │
-                    │   Gathering · 采集    │
-                    │   Entropy decay · 衰减│
-                    └──────────────────────┘
+┌──────────────────────┐
+│  Internal (Σ=0)      │
+│   Entity A ↔ Entity B│  ← trades conserved
+│   Recipe transforms  │  ← balanced
+└────────┬─────────────┘
+         │
+System boundary ──────────→ Σ ≠ 0
+         │
+┌────────┴─────────────┐
+│  Environment (Σ≠0)   │
+│   Consumption · 消耗  │
+│   Gathering · 采集    │
+│   Entropy decay · 衰减│
+└──────────────────────┘
 ```
 
-Only items marked `is_conserved: true` (e.g., coins) participate in conservation checks.
+Only items marked `is_conserved: true` participate in conservation checks.
 
-### 5.4 Entity Existence Toggle
+### 7.5 Entity Existence Toggle · 实体存在开关
 
-`node_config.json` → `world.allow_unregistered_entity` controls whether LLM can reference entities not in the tag map:
+`node_config.json` → `world.allow_unregistered_entity`:
 
 | Setting | Effect |
 |:--------|:-------|
-| **`false`** (default) | Every src/tgt must match existing graph node. Recipe-produced items must pre-exist. |
-| **`true`** | Auto-create missing nodes at runtime. Enables recipe products, emergent item creation. |
+| **`false`** | Every src/tgt must match existing graph node |
+| **`true`** | Auto-create missing nodes (enables recipe products, emergent items) |
 
-### 5.5 Hook Summary
+### 7.6 Hook Summary · 钩子总览
 
 | Hook | Location | Purpose |
 |:-----|:---------|:--------|
-| **A** (post_topo) | component split → pipeline | BFS results → per-component routing |
-| **B** (post_plan) | plan stage → exec_results | `adapter.build_entity_context()` per NPC, populates `comp.exec_results` for downstream stages |
-| **C** (LLM retry) | `_call_minimax()` | Adaptive timeout: 180s→120s→120s with token/temp degradation |
-| **D** (parse_retry) | post-LLM parse | `parse_llm_output()` → retry on json parse failure |
-| **E** (verify_retry) | post-LLM #4a/#5 | 6 checks → `build_feedback()` → retry with error context |
-| **F** (degree_recovery) | Σ=0 violation | Demote problematic ops to non-conserved grade |
+| **A** | component split → pipeline | BFS → per-component routing |
+| **B** | post-plan → exec_results | `adapter.build_entity_context()` for downstream stages |
+| **C** | `_call_minimax()` | Adaptive timeout: 180s→120s→120s |
+| **D** | post-LLM parse | `parse_llm_output()` → retry on JSON parse failure |
+| **E** | post-LLM #4a/#5 | 6 checks → `build_feedback()` → retry |
+| **F** | Σ=0 violation | Demote ops to non-conserved grade |
 
 ---
 
-## 6. Domain Purification · 域净化
+## 8. Domain Purification · 域净化
 
-### 6.0 Domain Purification Principle
+### 8.1 Principle · 原则
 
 The engine kernel has been **domain-purified**: no `has_role()` calls, no hardcoded field names, no domain-specific constants in any service file.
 
+引擎内核经过**域净化**：没有 `has_role()` 调用，没有硬编码的字段名，没有任何服务文件中的域特定常量。
+
 ```
 Before (contaminated):
-  pipeline_orchestrator._exec_result_dict()  # builds dict with npc_name/zone_after/mood_text
-  pipeline_orchestrator._find_zone()          # iterates edges looking for type_id=="region"
-  pipeline_orchestrator._val_text()           # knows mood/vitality/satiety constants
-  post_processor: has_role(e.type_id, "region"/"thing"/"actor")
-  conservation_validator: has_role(ent.type_id, "actor")
-  interaction_layer: reads npc/zone/attr keys directly
+  pipeline_orchestrator._exec_result_dict()  # knows npc_name/zone_after/mood_text
+  pipeline_orchestrator._find_zone()          # knows type_id=="region"
+  pipeline_orchestrator._val_text()           # knows mood/vitality/satiety
+  post_processor, conservation_validator, interaction_layer:
+    has_role(e.type_id, "region"/"thing"/"actor")
 
 After (purified):
-  All domain logic moved to DomainAdapter
-  Pipeline passes opaque dicts (prefix=_) between stages, never reads internals
-  has_role() calls → entity topology labels (is_starter, is_component_anchor, is_leaf)
-  Verification checks → config-driven masks in domain.json
+  All domain logic → DomainAdapter
+  Pipeline passes opaque dicts between stages, never reads internals
+  has_role() → entity topology labels (is_starter, is_component_anchor, is_leaf)
+  Verification checks → config-driven masks
 ```
 
-### 6.1 Dependency Injection
+### 8.2 Dependency Injection · 依赖注入
 
-`GraphNPCEngine.__init__(adapter=adapter)` — adapter is injected at the entry point (`run_1tick.py`), making it the **single domain-aware line** in the entire codebase:
+`GraphNPCEngine.__init__(adapter=adapter)` — the adapter is injected at the single entry point (`run_1tick.py`).
 
 ```python
-# run_1tick.py — the ONLY place that knows which domain we're running
+# run_1tick.py — the ONLY domain-aware line in the codebase
 adapter = NPCWorldAdapter()
 engine = GraphNPCEngine(adapter=adapter)
 orch = PipelineOrchestrator(adapter, engine._resolver, engine.graph_engine)
 ```
 
-### 6.2 Adapter Interface (24 abstract methods)
+### 8.3 Adapter Interface (24 Methods) · 适配器接口
 
-| Method | Purpose | Called by |
-|:-------|:--------|:----------|
-| `domain_name()` | Return domain label | Verification, logging |
-| `classify_node()` | Return `NodeClassification` (is_actor, is_container, is_consumable, is_location) | Graph engine |
-| `describe_node()` | Build `NodeDescriptor` for prompt rendering | Prompt assembler |
-| `get_pipeline_stages()` | Declare pipeline stages + order | Orchestrator loop |
-| `build_entity_context()` | Build opaque context dict for pipeline | Post-plan execution |
-| `extract_location()` | Find entity's location from edges | Entity context |
-| `resolve_entity_id()` | Generate canonical entity ID from name | Pipeline, graph adapter |
-| `format_attribute()` | Render attr key/value for prompt | Entity context |
-| `parse_llm_output()` | Parse LLM response per stage | Pipeline engine |
-| `normalize_name()` | Strip prefix from entity name | Verification |
-| `extract_op_references()` | Extract entity ID refs from topo ops | Verification |
-| `get_entity_tags()` | Get conservation/conceptual flags | Conservation validator |
-| `get_names_by_classification()` | List entity names by role | Post-processor |
-| `merge_results()` | Merge per-component results | Pipeline merge |
-| `get_node_role()` | Bridge: `NodeRole` enum | Compatibility |
-| `get_node_descriptor()` | Bridge: `NodeDescriptor` | Compatibility |
-| `get_config()` | Read arbitrary adapter config | Anywhere |
-| `get_prompt_template()` | Get slot list for a stage | Prompt assembler |
-| `render_slot()` | Render a named prompt slot | Prompt assembler |
-| `get_validators()` | Register graph validators | Verification layer |
-| `get_zones()` | List zone definitions | Init |
-| `get_recipes()` | List recipe definitions | Init |
-| `get_npc_initial_zones()` | Default NPC placements | Init |
-| `get_all_entity_names()` | All entity names for LM | Prompt safety |
+| Method | Purpose |
+|:-------|:--------|
+| `domain_name()` | Domain label for logging/verification |
+| `classify_node()` | `NodeClassification` — is_actor, is_container, is_consumable, is_location |
+| `describe_node()` | `NodeDescriptor` for prompt rendering |
+| `get_pipeline_stages()` | Declare pipeline stages + order |
+| `build_entity_context()` | Opaque dict for pipeline (post-plan) |
+| `extract_location()` | Find entity's location from edges |
+| `resolve_entity_id()` | Generate canonical entity ID from name |
+| `format_attribute()` | Render attr key/value for prompt |
+| `parse_llm_output()` | Parse LLM response per stage |
+| `normalize_name()` | Strip prefix from entity name |
+| `extract_op_references()` | Extract entity ID refs from topo ops |
+| `get_entity_tags()` | Conservation/conceptual flags |
+| `get_names_by_classification()` | List entity names by role |
+| `merge_results()` | Merge per-component results |
+| `get_node_role()` | Bridge: `NodeRole` enum |
+| `get_node_descriptor()` | Bridge: `NodeDescriptor` |
+| `get_config()` | Read arbitrary adapter config |
+| `get_prompt_template()` | Slot list for a stage |
+| `render_slot()` | Render a named prompt slot |
+| `get_validators()` | Register graph validators |
+| `get_zones()` | Zone definitions |
+| `get_recipes()` | Recipe definitions |
+| `get_npc_initial_zones()` | Default NPC placements |
+| `get_all_entity_names()` | All names for LM prompt safety |
 
 ---
 
-## 7. Cross-Domain Portability · 跨域可移植性
+## 9. Cross-Domain Portability · 跨域可移植性
 
-### 7.1 One Engine, Multiple Worlds
-
-> **The exact same engine kernel** — graph engine, pipeline orchestrator, verification system — works for any domain. Only the `.json` config files change.
+### 9.1 One Engine, Multiple Worlds · 同一引擎，无限世界
 
 ```mermaid
 flowchart TB
-    KERNEL["AgentWorld Engine Kernel\n<small>identical codebase · 同一份代码</small>"]
+    KERNEL["AgentWorld Engine Kernel<br/><small>identical codebase · 同一份代码</small>"]
 
-    subgraph W1["World 1: Witcher Village · 猎魔人村庄"]
-        CFG1["domain.json\n<small>npc: witcher, sorceress, bard\nitem: gold, herbs, swords\nrecipe: alchemy, smithing</small>"]
-    end
-
-    subgraph W2["World 2: Protein Network · 蛋白质网络"]
-        CFG2["domain.json\n<small>node: protein, enzyme, substrate\nedge: phosphorylation, binding\nattr: concentration, active_site</small>"]
-    end
-
-    subgraph W3["World 3: Fantasy Economy · 幻想经济"]
-        CFG3["domain.json\n<small>entity: city, trader, route\nresource: wood, stone, gold\nrecipe: craft, trade, tax</small>"]
-    end
-
-    subgraph W4["World 4: IoT Grid · 传感器网络"]
-        CFG4["domain.json\n<small>node: sensor, actuator, gateway\nedge: controls, reports_to\nattr: temperature, humidity</small>"]
-    end
+    W1["Witcher Village · 猎魔人<br/>NPCs, zones, items, recipes"]
+    W2["Protein Network · 蛋白质<br/>enzymes, substrates, binding"]
+    W3["Fantasy Economy · 经济<br/>cities, traders, routes"]
+    W4["IoT Sensor Grid · 传感器<br/>sensors, actuators, gateways"]
 
     KERNEL -.-> W1
     KERNEL -.-> W2
     KERNEL -.-> W3
     KERNEL -.-> W4
-
-    style KERNEL fill:#f5f5f5,stroke:#333,stroke-width:2px
-    style W1 fill:#e3f2fd,stroke:#1565c0
-    style W2 fill:#f3e5f5,stroke:#7b1fa2
-    style W3 fill:#e8f5e9,stroke:#2e7d32
-    style W4 fill:#fff3e0,stroke:#e65100
 ```
 
-### 7.2 What Changes Per Domain
+### 9.2 What Changes · 什么需要改
 
 | Layer | Change needed |
 |:------|:-------------|
@@ -602,124 +608,15 @@ flowchart TB
 | **Pipeline Orchestrator** | ❌ None — generic stage loop |
 | **Verification System** | ❌ None — driven by config mask |
 | **Conservation Rules** | ❌ None — Σ=0 by topology labels |
-| **Translation Layer** | ❌ None — abstract letters → NL |
+| **Translation Layer** | ❌ None — abstract → NL pattern unchanged |
 | **Prompt Assembly** | ❌ None — slot structure unchanged |
-| **DomainAdapter** | 🔄 **Write new adapter subclass** — 24 abstract methods |
-| **`domain.json`** | 🔄 Replace entirely — prompts, recipes, masks |
-| **`node_config.json`** | 🔄 Replace entirely — node types, ontology |
+| **DomainAdapter** | 🔄 **New subclass — 24 abstract methods** |
+| **`domain.json`** | 🔄 Replace entirely |
+| **`node_config.json`** | 🔄 Replace entirely |
 
-**A new domain needs: a `DomainAdapter` subclass + `domain.json` + `node_config.json`**. The engine kernel never changes.
+**A new domain needs: `DomainAdapter` subclass + `domain.json` + `node_config.json`**. The engine kernel never changes.
 
----
-
-## 8. Design Principles · 设计原则
-
-### 8.1 LLM is the Brain, Code is the Skeleton
-
-```
-Code: builds prompt, validates format, executes LLM decisions
-LLM:  understands state, makes judgments, creates narrative
-Code does not make decisions. It provides information and boundaries.
-```
-
-### 8.2 Natural Language > Hardcoded Thresholds
-
-```python
-# ❌ Anti-pattern:
-if entity.vitality < 30: go_rest()
-
-# ✅ Current:
-# Prompt injects: ⚠️ vitality < 30: extreme fatigue, must rest
-# LLM decides: where? how long? what after?
-```
-
-### 8.3 Topology–Content Decoupling
-
-```python
-# ❌ Forbidden — engine knows entity types:
-if entity.type_id == "NPC": ...
-
-# ✅ Allowed — engine reads type from config:
-if NODE_ONTOLOGY[ent.type_id].get("terminal"): ...
-```
-
-### 8.4 Layered Constraint Spectrum
-
-| Layer | Constraint | Allowed Hallucination | Fallback |
-|:------|:-----------|:---------------------|:---------|
-| **LLM #1** (Plan) | Very loose | Misremembered inventory | LLM #4a/5 read DB, ignore #1 |
-| **LLM #3** (Story) | Loose | Fictional dialogue | Data layer doesn't extract attrs |
-| **LLM #4a** (TopoΔ) | Tight | Missing ops, wrong zone | Validator + retry feedback |
-| **LLM #5** (Projection) | Tight | Occasional missed entries | DB keeps prev tick, auto-rollback |
-
-### 8.5 Graph is the Single Source of Truth
-
-Why graph instead of relational JOINs:
-- Adjacency queries are O(1)
-- Inventory is inherently correct (no `npc.inventory` ↔ DB inconsistency)
-- Topological isolation auto-limits social range
-- Entity IDs decouple display names from internals
-
----
-
-## 9. Project Structure · 项目结构
-
-```
-src/agent_world/
-├── config/                       # Domain configuration (swap = new world)
-│   ├── config_loader.py          #   JSON → type_id index · entity queries
-│   ├── domain.json               #   **ALL semantic content** (prompts, recipes, masks)
-│   └── node_config.json          #   Node ontology + entity defs
-├── db/                           # SQLite persistence (unified nodes table)
-│   ├── db.py                     #   NodeDB: generic CRUD + load_or_seed()
-│   ├── converters.py             #   node_to_npc() / npc_to_node_dict()
-│   └── schemas.py                #   Pydantic request/response schemas
-├── domain/                       # Domain adapter (DI injectable)
-│   ├── __init__.py
-│   ├── adapter.py                #   🔷 DomainAdapter abstract base class (24 methods)
-│   ├── npc_world/
-│   │   ├── __init__.py
-│   │   └── adapter.py            #   NPCWorldAdapter (Witcher domain)
-├── entities/                     # Entity models
-│   ├── __init__.py
-│   └── base_entity.py            #   Entity class (graph node)
-├── models/                       # Pydantic data models
-│   ├── __init__.py
-│   ├── interaction.py            #   Interaction models
-│   ├── npc.py                    #   NPC, NPCStatus, Position
-│   ├── npc_defaults.py           #   create_diverse_npcs()
-│   └── world.py                  #   World, Zone, WorldTime
-└── services/                     # Core pipeline (the engine)
-    ├── graph_engine.py           #   🔷 Graph: entities, edges, topology, BFS
-    ├── graph_adapter.py          #   DB/Config → Graph + sync_graph_to_nodes()
-    ├── graph_npc_engine.py       #   Main tick entry point (DI receives adapter)
-    ├── pipeline_orchestrator.py  #   🔷 Orchestrator: adapter-driven stage loop
-    ├── pipeline_engine.py        #   Stage engine: LLM call wrappers + timing
-    ├── prompt_assembler.py       #   Slot-based prompt assembly + translation
-    ├── interaction_resolver.py   #   LLM API wrapper (MiniMax / OpenAI, adaptive retry)
-    ├── interaction_layer.py      #   LLM #3: story generation
-    ├── post_processor.py         #   LLM #4a (topo delta) + #5 (content update) parsers
-    ├── verification_layer.py     #   Verification orchestrator
-    ├── verification_registry.py  #   6-check registry · mask control
-    ├── conservation_validator.py #   Σ=0 validator
-    └── intent_executor.py        #   Intent execution (partially retained)
-
-data/                              # SQLite database (generated)
-├── agent_world.db                 #   Unified nodes table
-
-docs/internal/                     # Internal documentation
-├── AGENT_WORLD.md                 #   Full technical reference
-├── KNOWN_ISSUES.md
-├── RECOVERY.md
-├── DESIGN_PHILOSOPHY.md
-└── PROJECT_PLAN.md
-
-scripts/                           # Visualization utilities
-└── viz_topology.py                #   Graph topology visualizer
-
-run_1tick.py                       # Single-tick runner script
-run_50ticks.py                     # Batch tick runner (50 ticks)
-```
+**一个新域只需要：** `DomainAdapter` 子类 + `domain.json` + `node_config.json`。引擎内核不需改动。
 
 ---
 
@@ -728,36 +625,99 @@ run_50ticks.py                     # Batch tick runner (50 ticks)
 ```bash
 pip install -r requirements.txt
 
-# Run a single tick (auto-seeds DB on first run — 38 nodes from config)
+# Run a single tick (auto-seeds DB on first run — 38 nodes)
 python3 run_1tick.py tick_001
 
-# Reset DB and run one tick
+# Reset DB and run
 rm data/agent_world.db && python3 run_1tick.py tick_001
 
 # Batch run 50 ticks
 python3 run_50ticks.py
-
-# Output: /tmp/full_tick/<label>/
-#   ├── LLM1_plans_*.txt       (plan prompts + responses)
-#   ├── LLM3_story_*.txt       (story prompts + responses)
-#   ├── LLM4a_topo_delta_*.txt (topo delta prompts + responses)
-#   ├── LLM5_projection_*.txt  (content update prompts + responses)
-#   ├── snapshot_before.json
-#   ├── snapshot_after.json
-#   ├── timing.json
-#   └── REPORT.md
 ```
 
-> ⚠️ **Requires an LLM API key** (MiniMax M2.7 by default, configurable in `interaction_resolver.py`). The engine runs 24 LLM calls per tick (~360s total).
+Output is written to `/tmp/full_tick/<label>/`:
+
+```
+/tmp/full_tick/tick_001/
+├── LLM1_plans_*.txt       # Plan prompts + responses
+├── LLM3_story_*.txt       # Story prompts + responses
+├── LLM4a_topo_delta_*.txt # Topo delta prompts + responses
+├── LLM5_projection_*.txt  # Content update prompts + responses
+├── snapshot_before.json   # Graph state before tick
+├── snapshot_after.json    # Graph state after tick
+├── timing.json            # Stage-level timing breakdown
+└── REPORT.md              # Summary report
+```
+
+> ⚠️ **Requires an LLM API key** (MiniMax M2.7 by default, configurable in `interaction_resolver.py`). One tick runs ~24 LLM calls in ~360s.
+>
+> ⚠️ **需要 LLM API 密钥**（默认 MiniMax M2.7，可在 `interaction_resolver.py` 中配置）。每 tick 约 24 次 LLM 调用，~360 秒。
+
+---
+
+## 11. Project Structure · 项目结构
+
+```
+agentworld/
+├── run_1tick.py                   # Single-tick runner (DI entry point)
+├── run_50ticks.py                 # Batch runner (50 ticks)
+├── requirements.txt
+│
+├── src/agent_world/
+│   ├── config/                    # World configuration (swap = new world)
+│   │   ├── config_loader.py       #   JSON → index queries
+│   │   ├── domain.json            #   ALL semantic content (prompts, recipes, masks)
+│   │   └── node_config.json       #   Node ontology + entity definitions
+│   │
+│   ├── db/                        # Persistence: unified nodes table
+│   │   ├── db.py                  #   NodeDB — generic CRUD
+│   │   └── converters.py          #   Node ↔ model converters
+│   │
+│   ├── domain/                    # Domain adapter (DI injectable)
+│   │   ├── adapter.py             #   24-method abstract base class
+│   │   └── npc_world/
+│   │       └── adapter.py         #   NPCWorldAdapter (Witcher domain)
+│   │
+│   ├── entities/                  # Entity model
+│   │   └── base_entity.py         #   Graph node class
+│   │
+│   ├── models/                    # Pydantic data models
+│   │   ├── interaction.py         #   Interaction models
+│   │   ├── npc.py                 #   NPC, NPCStatus, Position
+│   │   ├── npc_defaults.py        #   create_diverse_npcs()
+│   │   └── world.py               #   World, Zone, WorldTime
+│   │
+│   └── services/                  # Engine kernel (domain-agnostic)
+│       ├── graph_engine.py        #   🔷 Weighted multi-digraph, BFS
+│       ├── graph_adapter.py       #   DB/Config → Graph + sync
+│       ├── graph_npc_engine.py    #   Tick entry (DI receives adapter)
+│       ├── pipeline_orchestrator.py # 🔷 Adapter-driven stage loop
+│       ├── pipeline_engine.py     #   LLM call wrappers + timing
+│       ├── prompt_assembler.py    #   Slot-based prompt assembly
+│       ├── interaction_resolver.py # LLM API (MiniMax + adaptive retry)
+│       ├── interaction_layer.py   #   LLM #3: story generation
+│       ├── post_processor.py      #   LLM #4a +#5 parsers
+│       ├── verification_layer.py  #   Verification orchestrator
+│       ├── verification_registry.py # 6-check registry
+│       └── conservation_validator.py # Σ=0 validator
+│
+├── docs/internal/                 # Internal documentation
+│   ├── AGENT_WORLD.md             #   Full technical reference
+│   ├── KNOWN_ISSUES.md            #   Active issues log
+│   └── WITCHER_WORLD.md           #   Default domain description
+│
+└── data/                          # SQLite database (generated, gitignored)
+    └── agent_world.db
+```
 
 ---
 
 ## Technical Stack · 技术栈
 
-**Python 3.12+** · **Pydantic v2** · **MiniMax M2.7 API** · **OpenAI (fallback)** · **SQLite** · **Custom weighted multi-digraph engine**
+**Python 3.12+** · **Pydantic v2** · **MiniMax M2.7 API** (default) · **OpenAI** (fallback) · **SQLite** · **Custom weighted multi-digraph**
 
 ---
 
-## License · 许可证
+## License · 许可
 
 MIT
